@@ -9,6 +9,7 @@ It runs on .NET Framework 4.8 and the Microsoft Edge WebView2 Runtime, both part
 - [Getting started](#getting-started)
 - [The wheel](#the-wheel)
 - [Writing notes](#writing-notes)
+- [A note in its own window](#a-note-in-its-own-window)
 - [Categories](#categories)
 - [Show, order and search](#show-order-and-search)
 - [Locking a note](#locking-a-note)
@@ -28,8 +29,9 @@ It runs on .NET Framework 4.8 and the Microsoft Edge WebView2 Runtime, both part
    note) to close it.
 4. **New note** (Ctrl+N) starts a blank one. The **first line is its title**.
 
-Windows may say "Windows protected your PC" the first time if the folder was downloaded or emailed: that's
-because NoteSpin isn't signed. Choose *More info → Run anyway*, or copy it from a network folder instead.
+Windows may say "Windows protected your PC" the first time if the folder was downloaded or emailed. Release
+downloads are signed, but SmartScreen also waits until a new app has been run by enough people. Choose
+*More info → Run anyway*; *More info* shows the publisher. A copy you build yourself isn't signed.
 
 ## The wheel
 
@@ -85,6 +87,30 @@ down to a strip of icons (it folds by itself in a narrow window). Everything siz
 - **Saving** happens as you type (the band says *Saved*). Closing the window saves anything still waiting.
 - **Deleting**: the bin button in a note. A note closed with nothing in it is deleted automatically, with
   **Undo** in the message that appears.
+
+## A note in its own window
+
+A note can leave the wheel and sit on the desktop in a small window of its own, like a sticky note: handy for
+a list you're working through, even with NoteSpin minimized.
+
+- **Drag it out.** Open a note, grab its top strip (the coloured band, away from the category box and the
+  buttons) and drag it past the edge of the NoteSpin window. It becomes a window that follows the mouse; let
+  go where you want it. Or click the **pop-out button** in the band.
+- **Or always.** *Settings → Notes → Always open notes in their own window* opens every note that way.
+- **One note at a time.** While a note is in its window, opening another card (or *New note*) opens that one
+  in the window instead, after saving the one that was there. Clicking the card of the note that's already
+  out brings its window to the front.
+- **The window.** Move it by its top strip and resize it from its edges; the **pin** keeps it on top of
+  other windows. It remembers its place and size. Esc or × closes the note and the window goes away (an
+  emptied note is deleted as usual, with Undo in the NoteSpin window). **Ctrl+N** in it starts a new note there.
+- **Minimize NoteSpin** and the note stays on the desktop. **Closing NoteSpin** closes it too, and the note
+  opens in its window again next time NoteSpin starts (unless it's locked).
+- **Putting it back.** The **put-back button** in its band, or drag the window over the NoteSpin window and
+  drop it on the outline that appears around the front card. Only that outline takes it back, so a note can
+  also sit on top of the NoteSpin window.
+- Its card on the wheel catches up as you type. Switching notebooks closes it first, as it belongs to the
+  notebook that was open. A locked note moves between the windows without asking for its password again, and
+  locks again when it's closed.
 
 ## Categories
 
@@ -163,7 +189,7 @@ always a single file (nothing beside it), so it can be copied while NoteSpin is 
 | ↑ ↓ (or ← →, Page Up/Down) | Previous / next card |
 | Home / End | First / last card |
 | Enter or Space | Open the front card (or the category) |
-| Ctrl+N | New note |
+| Ctrl+N | New note (in the note window too) |
 | Ctrl+F | Search |
 | Esc | Close the note · clear the search · back to the categories |
 | Backspace | Back to the categories |
@@ -178,6 +204,8 @@ always a single file (nothing beside it), so it can be copied while NoteSpin is 
 | Drag sideways | Look at the wheel from another side |
 | Click (tap) the front card | Open it |
 | Click (tap) a card behind | Bring it to the front |
+| Drag a note's top strip out of the window | Give it a window of its own |
+| Drop the note window on the front card | Put the note back |
 | Drop a `.notespin` file on the window | Import it |
 
 ## Questions
@@ -203,7 +231,12 @@ folder, and run it. If the notebooks aren't in `Documents\NoteSpin`, use *Settin
 
 ```powershell
 .\build.ps1          # -> dist\NoteSpin
+.\release.ps1        # build, sign NoteSpin.exe, verify -> NoteSpin-<version>.zip for a GitHub release
 ```
+
+`release.ps1` signs with Azure Artifact Signing: it needs the `sign` tool
+(`dotnet tool install -g --prerelease sign`) and an `az login` with signing rights. The version comes from
+`<Version>` in `NoteSpin.csproj`.
 
 Needs the .NET SDK on the build PC only. The output folder is the whole app (about 3 MB):
 
@@ -224,12 +257,23 @@ NoteSpin is a small Windows Forms window around a WebView2 browser view. The pag
 the window. The page reaches the C# side through one object (`chrome.webview.hostObjects.ns`, wrapped as
 `window.NS` by `web\js\host.js`), which reads and writes the notebook files with SQLite.
 
-- **C#:** `src\MainForm.cs` (window, web view, Windows dialogs), `src\HostApi.cs` (what the page can call),
+The note window is a second, borderless window with its own WebView2 (sharing the first one's browser) showing
+`web\note.html`: the same editor, on its own. It's made shortly after start-up and hidden, then reused, so it
+can appear in the middle of a drag. The two pages don't talk directly: each has its own host object, and the
+C# side passes notes and messages between them (`NoteWin…`, `ToMain` and `ToNote` in `HostApi`). A note
+moves as the editor's state (`exportState`/`openState` in `editor.js`), including the key of an unlocked
+note, so only one window ever has it open.
+
+- **C#:** `src\MainForm.cs` (main window, Windows dialogs, the drop target for the note window),
+  `src\NoteWindow.cs` (the note window: resizing, moving, following a drag), `src\PageHost.cs` (the web view
+  in each window: serving the page, what it may open), `src\Native.cs` (the few Windows calls needed),
+  `src\HostApi.cs` (what the pages can call),
   `src\Library.cs` (the notebooks folder, switching, backups), `src\Notebook.cs` (one notebook file:
   schema, notes, categories, search), `src\Settings.cs` (this PC's settings), `src\FileAssoc.cs` (the optional
   double-click setting), `src\FolderPicker.cs` (the Windows folder picker), `src\Sqlite.cs`, `src\WebAssets.cs`.
-- **Page:** `web\index.html`, `web\css\app.css`, and in `web\js`: `app.js` (panel, views, search,
-  notebooks, settings), `spinner.js` (the 3D wheel: drum, cards, movement, input), `cardface.js` (drawing a
+- **Pages:** `web\index.html` and `web\note.html`, `web\css\app.css`, and in `web\js`: `app.js` (panel,
+  views, search, notebooks, settings, sending notes to the note window), `notewin.js` (the note window's page),
+  `icons.js` (the icons, for both pages), `spinner.js` (the 3D wheel: drum, cards, movement, input), `cardface.js` (drawing a
   card), `editor.js` (the note editor, list handling, locking prompts), `notes.js` (what a note is made of,
   category colours), `crypto.js` (locking), `ui.js` (dialogs, menus, messages), `host.js` (the bridge).
 - **A notebook file:** tables `notes` (title = first line, body = the note's HTML, or the encrypted text when
@@ -249,5 +293,5 @@ Environment variables for testing:
 
 `tools\run-test.ps1` starts a Debug build with these, a throwaway data folder (`tools\out`, not in Git) and
 the DevTools protocol on port 9333; `tools\cdp.mjs` (Node 22+) drives it: run JavaScript, click, type, take
-screenshots. `tools\filedlg.ps1` fills in the Windows Open/Save/folder dialogs, `tools\crop.ps1` enlarges part
+screenshots (`connect(port, timeout, 'note.html')` drives the note window). `tools\filedlg.ps1` fills in the Windows Open/Save/folder dialogs, `tools\crop.ps1` enlarges part
 of a screenshot, and `tools\screen.ps1` captures the window as it appears on screen.

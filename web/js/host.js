@@ -51,6 +51,11 @@
       return request(id => wv.postMessageWithAdditionalObjects({type: 'filePath', id}, [file])).then(m => m.path || null);
     },
 
+    // closes the note in the note window (saving it); resolves once it's closed (or after 10 s, whatever happened)
+    closeNoteWindow() {
+      return Promise.race([request(id => api.NoteWinClose(id)), new Promise(r => setTimeout(r, 10000))]);
+    },
+
     on(type, fn) { listeners.set(type, fn); },
   };
 })();

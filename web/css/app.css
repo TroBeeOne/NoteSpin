@@ -257,7 +257,9 @@ body.collapsed #panel .foot { flex-direction: column; align-items: center; gap: 
 }
 .ed-cat { position: relative; display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; color: rgba(25, 27, 32, 0.75); }
 .ed-cat input {
-  flex: 1; min-width: 0; max-width: 300px;
+  /* as wide as the name, so the rest of the strip is free to grab */
+  field-sizing: content;
+  flex: 0 1 auto; min-width: 7em; max-width: 300px;
   padding: 5px 8px;
   border: 1px solid transparent;
   border-radius: 7px;
@@ -362,6 +364,55 @@ body.collapsed #panel .foot { flex-direction: column; align-items: center; gap: 
 ::highlight(ns-search) { background-color: #ff9f1c; color: #111; }
 
 .ed-foot { padding: 7px 16px 9px; font-size: 12px; color: rgba(25, 27, 32, 0.55); border-top: 1px solid rgba(0, 0, 0, 0.06); }
+
+/* the top strip: drag it out of the window to give the note a window of its own */
+.ed-band { cursor: grab; touch-action: none; }
+.ed-band input, .ed-band .ed-catlist { cursor: auto; }
+.ed-card.tearing { box-shadow: 0 40px 100px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.35); cursor: grabbing; user-select: none; }
+.ed-card.tearing .ed-band { cursor: grabbing; }
+
+/* ---------- the note in its own window (note.html) ---------- */
+
+body.windowed { background: #fff2a6; }
+.windowed .ed-layer { padding: 0; background: transparent; }
+.windowed .ed-card { width: 100%; height: 100%; border-radius: 0; box-shadow: none; }
+.windowed .ed-band { padding: 4px 4px 4px 8px; gap: 2px; cursor: default; }
+.windowed .ed-cat { gap: 5px; }
+.windowed .ed-cat svg { width: 16px; height: 16px; }
+.windowed .ed-cat input { padding: 4px 6px; }
+.windowed .ed-catlist { left: 0; width: min(280px, calc(100vw - 24px)); max-height: calc(100vh - 64px); }
+.windowed .ed-status { margin-right: 2px; }
+.windowed .ed-btn { width: 30px; height: 30px; border-radius: 7px; }
+.windowed .ed-btn svg { width: 17px; height: 17px; }
+.windowed .ed-tools { padding: 3px 6px; gap: 1px; }
+.windowed .ed-tools button { width: 29px; height: 27px; }
+.windowed .ed-lockinfo > span { display: none; }   /* the icon says it; the words are its tooltip */
+.windowed .ed-scroll { padding: 12px 16px 20px; }
+.windowed .ed-body { font-size: 15.5px; }
+.windowed .ed-foot { padding: 5px 10px 6px; }
+.windowed .toasts { position: fixed; bottom: 12px; }
+.windowed .toast { max-width: calc(100vw - 24px); }
+@media (max-width: 330px) { .windowed .ed-status { display: none; } }
+
+/* where a note window can be dropped to put the note back over the cards */
+.drop-zone {
+  position: fixed;
+  display: grid; place-items: center;
+  padding: 16px;
+  border: 2px dashed rgba(246, 207, 87, 0.5);
+  border-radius: 16px;
+  background: rgba(246, 207, 87, 0.05);
+  color: var(--text-2);
+  font-weight: 600;
+  text-align: center;
+  z-index: 15;
+  pointer-events: none;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.drop-zone span { padding: 6px 12px; border-radius: 9px; background: rgba(21, 23, 28, 0.85); }
+.drop-zone.on { border-color: var(--accent); border-style: solid; background: rgba(246, 207, 87, 0.16); color: var(--text-strong); }
+
+svg.inline-icon { width: 15px; height: 15px; vertical-align: -3px; }
 
 /* ---------- dialogs ---------- */
 

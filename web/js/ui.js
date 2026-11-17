@@ -4,6 +4,12 @@ export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;',
 
 let openDialogs = 0;
 export const dialogOpen = () => openDialogs > 0;
+const cancellers = new Set();
+
+/** Closes every open dialog as if Esc was pressed (the note window, closing while one is up). */
+export function cancelDialogs() {
+  for (const c of [...cancellers]) c();
+}
 
 /**
  * A modal dialog. Resolves with the value of the button pressed (cancelValue for Esc).
@@ -21,16 +27,18 @@ export function dialog({title, html = '', node = null, buttons = [{label: 'OK', 
     box.innerHTML = `<h2>${esc(title)}</h2><div class="dlg-body">${html}</div><div class="dlg-buttons"></div>`;
     if (node) box.querySelector('.dlg-body').append(node);
     const row = box.querySelector('.dlg-buttons');
-    let busy = false;
+    let busy = false, done = false;
     const finish = async v => {
-      if (busy) return;
+      if (busy || done) return;
       if (submit && v !== cancelValue) {
         busy = true;
         let r;
         try { r = await submit(v, box); } finally { busy = false; }
-        if (r === false) return;
+        if (r === false || done) return;
         if (r !== undefined) v = r;
       }
+      done = true;
+      cancellers.delete(cancel);
       back.remove();
       openDialogs--;
       document.removeEventListener('keydown', onKey, true);
@@ -61,6 +69,8 @@ export function dialog({title, html = '', node = null, buttons = [{label: 'OK', 
         else if (!e.shiftKey && i === f.length - 1) { e.preventDefault(); f[0].focus(); }
       }
     };
+    const cancel = () => { busy = false; finish(cancelValue); };
+    cancellers.add(cancel);
     document.addEventListener('keydown', onKey, true);
     back.append(box);
     document.getElementById('dialogs').append(back);

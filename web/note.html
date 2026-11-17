@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Note — NoteSpin</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<!-- The note window: one note, outside the main window (src\NoteWindow.cs). The editor (web\js\editor.js)
+     fills it; its top strip moves the window. -->
+<body class="windowed">
+<script src="js/icons.js"></script>
+<div id="toasts" class="toasts" aria-live="polite"></div>
+<!-- the note editor goes here -->
+<div id="dialogs"></div>
+
+<script src="js/host.js"></script>
+<script type="module" src="js/notewin.js"></script>
+</body>
+</html>

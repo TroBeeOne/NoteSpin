@@ -1,6 +1,7 @@
-// The note editor: a sticky note in front of the cards. One font, and only bulleted, numbered and
-// checkbox lists. It saves as you type; a locked note is encrypted before every save and locks again
-// (its password forgotten) when it closes. A note closed with nothing in it is deleted.
+// The note editor: a sticky note in front of the cards, or filling the note window (windowed). One font,
+// and only bulleted, numbered and checkbox lists. It saves as you type; a locked note is encrypted before
+// every save and locks again (its password forgotten) when it closes. A note closed with nothing in it is deleted.
+// A note can move between the two windows (exportState, then openState in the other one); only one is open at a time.
 
 import {parse, parseHtml, analyze, toHtml, textToBlocks, bandColor, pickColor, GENERAL_ID} from './notes.js';
 import {LockSession, WrongPassword} from './crypto.js';
@@ -8,6 +9,38 @@ import {dialog, confirmDlg, toast, esc} from './ui.js';
 
 const SAVE_DELAY = 650;
 const $ = id => document.getElementById(id);
+
+const MARKUP = `<div id="editorLayer" class="ed-layer" hidden>
+  <div class="ed-card" role="dialog" aria-label="Note">
+    <header class="ed-band">
+      <div class="ed-cat">
+        <svg><use href="#i-tag"/></svg>
+        <input id="edCat" type="text" maxlength="60" placeholder="General" autocomplete="off" spellcheck="false" aria-label="Category (blank for General)">
+        <div id="edCatList" class="ed-catlist" hidden></div>
+      </div>
+      <span id="edStatus" class="ed-status"></span>
+      <button id="edLock" class="ed-btn" title="Lock with a password" aria-label="Lock"><svg><use href="#i-lock"/></svg></button>
+      <button id="edDelete" class="ed-btn" title="Delete note" aria-label="Delete note"><svg><use href="#i-trash"/></svg></button>
+      <button id="edPopOut" class="ed-btn" title="Open in its own window (or drag the note out of NoteSpin by this strip)" aria-label="Open in its own window"><svg><use href="#i-popout"/></svg></button>
+      <button id="edPin" class="ed-btn" title="Keep on top of other windows" aria-label="Keep on top" aria-pressed="false"><svg><use href="#i-pin"/></svg></button>
+      <button id="edPopIn" class="ed-btn" title="Put it back in the NoteSpin window (or drag it onto the cards)" aria-label="Put back in NoteSpin"><svg><use href="#i-popin"/></svg></button>
+      <button id="edClose" class="ed-btn" title="Close (Esc)" aria-label="Close"><svg><use href="#i-x"/></svg></button>
+    </header>
+    <div class="ed-tools">
+      <button data-cmd="ul" title="Bulleted list (type - and a space)" aria-label="Bulleted list"><svg><use href="#i-ul"/></svg></button>
+      <button data-cmd="ol" title="Numbered list (type 1. and a space)" aria-label="Numbered list"><svg><use href="#i-ol"/></svg></button>
+      <button data-cmd="check" title="Checklist (type [] and a space; Ctrl+Enter ticks)" aria-label="Checklist"><svg><use href="#i-check"/></svg></button>
+      <span class="ed-sep"></span>
+      <button data-cmd="outdent" title="Move a list item out a level (Shift+Tab)" aria-label="Move list item out"><svg><use href="#i-outdent"/></svg></button>
+      <button data-cmd="indent" title="Move a list item in, under the one above (Tab)" aria-label="Move list item in"><svg><use href="#i-indent"/></svg></button>
+      <span id="edLockInfo" class="ed-lockinfo" title="Locked: the first line and the category stay readable" hidden><svg><use href="#i-lock"/></svg><span>Locked: the first line and the category stay readable</span></span>
+    </div>
+    <div class="ed-scroll">
+      <div id="edBody" class="ed-body" contenteditable="true" spellcheck="true" aria-label="Note text" aria-multiline="true"></div>
+    </div>
+    <footer class="ed-foot"><span id="edMeta"></span></footer>
+  </div>
+</div>`;
 
 const fmtDate = ms => {
   if (!ms) return '';
@@ -160,8 +193,16 @@ export function askPassword(title, open) {
 /* ---------- the editor ---------- */
 
 export class Editor {
-  constructor(app) {
+  /**
+   * app: what the editor needs from the page (categories, the wheel, what to do when a note closes).
+   * windowed: it's the note window's editor (no wheel behind it; the top strip moves the window).
+   */
+  constructor(app, {windowed = false} = {}) {
     this.app = app;
+    this.windowed = windowed;
+    if (!$('editorLayer')) $('dialogs').insertAdjacentHTML('beforebegin', MARKUP);
+    $('edPopOut').hidden = windowed;
+    $('edPin').hidden = $('edPopIn').hidden = !windowed;
     this.layer = $('editorLayer');
     this.card = this.layer.querySelector('.ed-card');
     this.body = $('edBody');
@@ -185,6 +226,10 @@ export class Editor {
     $('edClose').addEventListener('click', () => this.close());
     $('edDelete').addEventListener('click', () => this.deleteNote());
     $('edLock').addEventListener('click', () => this.toggleLock());
+    $('edPopOut').addEventListener('click', () => this.app.popOut?.());
+    $('edPin').addEventListener('click', () => this.app.togglePin?.());
+    $('edPopIn').addEventListener('click', () => this.app.popIn?.());
+    this.card.querySelector('.ed-band').addEventListener('pointerdown', e => this.onBandDown(e));
     this.layer.querySelectorAll('.ed-tools [data-cmd]').forEach(b => {
       b.addEventListener('mousedown', e => e.preventDefault());   // keep the caret in the note
       b.addEventListener('click', () => this.command(b.dataset.cmd));
@@ -266,14 +311,18 @@ export class Editor {
     this.updateLockUi();
     this.updateEmpty();
     this.layer.hidden = false;
-    this.app.spinner.enabled = false;
-    this.animate(from, true);
+    this.card.style.transform = '';
+    if (!this.windowed) {
+      this.app.spinner.enabled = false;
+      this.animate(from, true);
+    }
     this.from = from;
     if (highlight?.length) this.highlight(highlight);
     this.focusEnd(!!highlight?.length);
   }
 
-  async close() {
+  /** Saves and closes the note (deleting it if it's empty). opts go along to app.editorClosed. */
+  async close(opts = {}) {
     if (!this.isOpen || this.closing) return;
     this.closing = true;
     try {
@@ -287,16 +336,110 @@ export class Editor {
         } catch (e) { toast('Couldn\'t delete the empty note: ' + e.message, {kind: 'error'}); }
       }
       const id = doc.empty ? null : this.note.id || null;
-      await this.animate(this.app.spinner.frontRect() && id ? this.from : null, false);
-      this.layer.hidden = true;
-      this.body.innerHTML = '';
-      this.session = null;   // locked notes lock again
-      CSS.highlights?.delete('ns-search');
-      this.app.spinner.enabled = true;
-      this.app.editorClosed(id, {emptied: removed});
+      if (!this.windowed) await this.animate(this.app.spinner.frontRect() && id ? this.from : null, false);
+      this.hide();
+      this.app.editorClosed(id, {...opts, emptied: removed});
     } finally {
       this.closing = false;
     }
+  }
+
+  hide() {
+    this.layer.hidden = true;
+    this.body.innerHTML = '';
+    this.session = null;   // locked notes lock again
+    this.card.style.transform = '';
+    this.card.classList.remove('tearing');
+    CSS.highlights?.delete('ns-search');
+    if (!this.windowed) this.app.spinner.enabled = true;
+  }
+
+  /* ---------- moving a note to the other window ---------- */
+
+  /**
+   * Everything the other window's editor needs to carry on with this note: the note, its text, the category
+   * typed, the key while it's unlocked, and whether a change is still to be saved. Saves first, so nothing
+   * typed is lost on the way and a new note has its id before it moves.
+   */
+  async exportState() {
+    await this.save();
+    clearTimeout(this.timer);
+    const doc = analyze(parse(this.body));
+    const n = this.note;
+    return {
+      note: n.id ? {id: n.id, cat: n.cat, title: n.title, locked: !!this.session, created: n.created, updated: n.updated} : null,
+      categoryId: n.cat,
+      catName: this.catInput.value.trim(),
+      newColor: this.newColor,
+      html: doc.html,
+      key: this.session ? await this.session.export() : null,
+      original: this.original || null,
+      dirty: this.dirty,
+    };
+  }
+
+  /** Closes the editor without saving or deleting anything: the note has moved to the other window. */
+  detach() {
+    clearTimeout(this.timer);
+    this.dirty = false;
+    this.hide();
+  }
+
+  /** Opens a note brought over from the other window (what exportState gave there). */
+  async openState(st, {from = null} = {}) {
+    const session = st.key ? await LockSession.import(st.key) : null;
+    this.open(st.note, {html: st.html, session, categoryId: st.categoryId || GENERAL_ID, original: st.original, from, highlight: st.highlight});
+    let dirty = !!st.dirty;
+    if (typeof st.catName === 'string' && st.catName !== this.catInput.value) { this.catInput.value = st.catName; dirty = true; }
+    if (st.newColor) this.newColor = st.newColor;
+    this.paintCategory();
+    if (dirty) this.markDirty();
+  }
+
+  /* ---------- the top strip: drags the note out of the main window, or moves the note window ---------- */
+
+  onBandDown(e) {
+    if (e.button !== 0 || e.target.closest('input, button, .ed-catlist')) return;
+    if (this.windowed) {
+      e.preventDefault();
+      this.app.dragWindow?.(e.pointerType);
+      return;
+    }
+    if (!this.app.popOut) return;
+    e.preventDefault();
+    const band = e.currentTarget, card = this.card;
+    const r = card.getBoundingClientRect();
+    const g = {id: e.pointerId, x0: e.clientX, y0: e.clientY, gx: e.clientX - r.left, gy: e.clientY - r.top, moved: false, out: null};
+    band.setPointerCapture(e.pointerId);
+    const move = ev => {
+      if (ev.pointerId !== g.id || g.out) return;
+      const dx = ev.clientX - g.x0, dy = ev.clientY - g.y0;
+      if (!g.moved) {
+        if (Math.hypot(dx, dy) < 6) return;
+        g.moved = true;
+        card.classList.add('tearing');
+      }
+      card.style.transform = `translate(${dx}px, ${dy}px)`;
+      // past the edge of the window: the note gets a window of its own, which carries on with the drag
+      if (ev.clientX <= 0 || ev.clientY <= 0 || ev.clientX >= innerWidth - 1 || ev.clientY >= innerHeight - 1)
+        g.out = this.app.popOut({drag: true, grabX: g.gx, grabY: g.gy, pointerType: ev.pointerType});
+    };
+    const end = ev => {
+      if (ev.pointerId !== g.id) return;
+      band.removeEventListener('pointermove', move);
+      band.removeEventListener('pointerup', end);
+      band.removeEventListener('pointercancel', end);
+      // the note window follows a mouse until its button comes up; for a finger or pen it's told when the drag ends
+      if (g.out) { if (ev.pointerType !== 'mouse') g.out.then(() => NS.call('NoteWinFollowEnd')).catch(() => {}); return; }
+      card.classList.remove('tearing');
+      if (g.moved) {
+        card.animate([{transform: card.style.transform}, {transform: 'none'}], {duration: 180, easing: 'cubic-bezier(.2,.8,.2,1)'});
+        card.style.transform = '';
+      }
+    };
+    band.addEventListener('pointermove', move);
+    band.addEventListener('pointerup', end);
+    band.addEventListener('pointercancel', end);
   }
 
   animate(rect, opening) {
@@ -372,7 +515,7 @@ export class Editor {
       const r = await NS.call('NoteSave', JSON.stringify(payload));
       Object.assign(this.note, {id: r.id, cat: r.cat, created: r.created, updated: r.updated, title: doc.title, locked});
       if (r.newCategory) await this.app.reloadCategories();
-      this.app.noteChanged();
+      this.app.noteChanged(this.note);
       this.setStatus(this.dirty ? 'Editing…' : 'Saved');
       this.showMeta();
     } catch (e) {
@@ -401,6 +544,7 @@ export class Editor {
     const color = c ? c.color : this.newColor;
     this.card.style.setProperty('--paper', color);
     this.card.style.setProperty('--band', bandColor(color));
+    this.app.painted?.(color, bandColor(color));
   }
 
   commitCategory() {
@@ -437,6 +581,14 @@ export class Editor {
     $('edLock').title = locked ? 'Locked: click to remove the lock' : 'Lock with a password';
     $('edLockInfo').hidden = !locked;
     this.card.classList.toggle('locked', locked);
+  }
+
+  /** The note window's "keep on top" button. */
+  setPinned(on) {
+    const b = $('edPin');
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', String(on));
+    b.title = on ? 'Kept on top of other windows (click to stop)' : 'Keep on top of other windows';
   }
 
   async toggleLock() {
@@ -480,11 +632,8 @@ export class Editor {
       toast('Couldn\'t delete the note: ' + e.message, {kind: 'error'});
       return;
     }
-    await this.animate(null, false);
-    this.layer.hidden = true;
-    this.body.innerHTML = '';
-    this.session = null;
-    this.app.spinner.enabled = true;
+    if (!this.windowed) await this.animate(null, false);
+    this.hide();
     this.app.editorClosed(null, {deleted: true});
   }
 

@@ -109,12 +109,15 @@ namespace NoteSpin
             ["categories"] = db.Scalar("SELECT COUNT(*) FROM categories"),
         };
 
+        public List<object> ListCategories() =>
+            db.Query("SELECT id, name, color, created FROM categories ORDER BY name COLLATE NOCASE")
+                .Select(r => (object)new Dictionary<string, object> { ["id"] = r[0], ["name"] = r[1], ["color"] = r[2], ["created"] = r[3] })
+                .ToList();
+
         /// <summary>Everything the page needs to draw the cards: all categories and every note without its body.</summary>
         public Dictionary<string, object> ListAll()
         {
-            var cats = db.Query("SELECT id, name, color, created FROM categories ORDER BY name COLLATE NOCASE")
-                .Select(r => (object)new Dictionary<string, object> { ["id"] = r[0], ["name"] = r[1], ["color"] = r[2], ["created"] = r[3] })
-                .ToList();
+            var cats = ListCategories();
             var notes = db.Query("SELECT id, category_id, title, preview, locked, created, updated FROM notes")
                 .Select(r => (object)new Dictionary<string, object>
                 {

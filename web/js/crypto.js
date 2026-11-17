@@ -10,10 +10,13 @@ const ITERATIONS = 150000;
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
+// The key can be exported so an unlocked note can move between NoteSpin's two windows (the main window and
+// the note window) without asking for the password again. It only ever passes through NoteSpin's own
+// memory, never to disk; the password itself isn't kept anywhere.
 async function deriveKey(password, salt) {
   const base = await crypto.subtle.importKey('raw', enc.encode(password), {name: 'PBKDF2'}, false, ['deriveKey']);
   return crypto.subtle.deriveKey({name: 'PBKDF2', salt, iterations: ITERATIONS, hash: 'SHA-256'},
-    base, {name: 'AES-GCM', length: 256}, false, ['encrypt', 'decrypt']);
+    base, {name: 'AES-GCM', length: 256}, true, ['encrypt', 'decrypt']);
 }
 
 function toBase64(u8) {
@@ -53,6 +56,16 @@ export class LockSession {
     try { plain = await crypto.subtle.decrypt({name: 'AES-GCM', iv}, key, ct); }
     catch { throw new WrongPassword(); }
     return {session: new LockSession(key, salt), text: dec.decode(plain)};
+  }
+
+  /** The session, to carry on in the other window: {key, salt} in base64. */
+  async export() {
+    return {key: toBase64(new Uint8Array(await crypto.subtle.exportKey('raw', this.key))), salt: toBase64(this.salt)};
+  }
+
+  static async import({key, salt}) {
+    const k = await crypto.subtle.importKey('raw', fromBase64(key), {name: 'AES-GCM'}, true, ['encrypt', 'decrypt']);
+    return new LockSession(k, fromBase64(salt));
   }
 
   async encrypt(text) {

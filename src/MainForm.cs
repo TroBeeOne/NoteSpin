@@ -11,28 +11,22 @@ using Microsoft.Web.WebView2.Core;
 namespace NoteSpin
 {
     /// <summary>
-    /// The app window: a WebView2 that shows the page compiled into the exe at https://notespin.local/.
-    /// Nothing else can load in it; outside links open in the default browser.
+    /// The app window: the page compiled into the exe (web\index.html) in a WebView2. It also looks after the
+    /// note window, where a note can be kept outside it (see NoteWindow).
     /// </summary>
     internal sealed class MainForm : Form
     {
-        public const string Origin = "https://notespin.local/";
         static readonly Color Bg = Color.FromArgb(17, 19, 24);
-        // browser-only entries removed from the right-click menu (copy, paste, spelling etc. stay)
-        static readonly HashSet<string> BlockedMenuItems = new HashSet<string>
-        {
-            "back", "forward", "reload", "saveAs", "print", "createQrCode", "share", "inspectElement", "viewPageSource",
-            "openLinkInNewWindow", "saveLinkAs", "saveImageAs", "saveMediaAs", "openImageInNewWindow", "copyLinkToHighlight", "webCapture",
-        };
 
         readonly Settings settings;
         readonly Library lib;
+        readonly PageHost page;
         string startupFile;
         CoreWebView2Environment env;
-        CoreWebView2Controller ctl;
-        CoreWebView2 core;
-        bool closeConfirmed, closing;
-        readonly bool devTools = Environment.GetEnvironmentVariable("NOTESPIN_DEVTOOLS") == "1";
+        NoteWindow notes;
+        Task<NoteWindow> notesReady;
+        bool closeConfirmed, closing, dockShown;
+        int dockSent;
 
         public string DataDir { get; }
 
@@ -47,6 +41,15 @@ namespace NoteSpin
             Icon = WebAssets.AppIcon() ?? Icon;
             StartPosition = FormStartPosition.Manual;
             MinimumSize = new Size(560, 420);
+            page = new PageHost(this, Bg);
+            page.FileDropped += OnDroppedFile;
+            page.BrowserExited += () =>
+            {
+                MessageBox.Show(this, "The web view stopped unexpectedly. Notes are saved as you type; reopen NoteSpin to carry on.",
+                    "NoteSpin", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                closeConfirmed = true;
+                Close();
+            };
             RestorePlacement();
         }
 
@@ -57,13 +60,18 @@ namespace NoteSpin
             base.OnLoad(e);
             try
             {
-                await InitWebView();
+                env = await CoreWebView2Environment.CreateAsync(null, Path.Combine(DataDir, "WebView2"), new CoreWebView2EnvironmentOptions());
+                await page.Start(env, "index.html", new HostApi(this, settings, lib, null));
+                page.Core.WebMessageReceived += OnWebMessage;
+                page.Core.DocumentTitleChanged += (s, a) => Text = string.IsNullOrWhiteSpace(page.Core.DocumentTitle) ? "NoteSpin" : page.Core.DocumentTitle;
+                page.Core.NavigationCompleted += OnFirstPageLoaded;
+                if (ContainsFocus) page.Focus();
             }
             catch (WebView2RuntimeNotFoundException)
             {
                 if (MessageBox.Show(this, "NoteSpin needs the Microsoft Edge WebView2 Runtime, which comes with Windows 11 but isn't on this PC.\n\nOpen Microsoft's download page?",
                         "NoteSpin", MessageBoxButtons.YesNo, MessageBoxIcon.Error) == DialogResult.Yes)
-                    OpenExternal("https://developer.microsoft.com/microsoft-edge/webview2/");
+                    PageHost.OpenExternal("https://developer.microsoft.com/microsoft-edge/webview2/");
                 closeConfirmed = true;
                 Close();
             }
@@ -75,76 +83,35 @@ namespace NoteSpin
             }
         }
 
-        async Task InitWebView()
+        // The note window is made a moment after the cards are up, so it's ready when a note is dragged out
+        async void OnFirstPageLoaded(object sender, CoreWebView2NavigationCompletedEventArgs e)
         {
-            env = await CoreWebView2Environment.CreateAsync(null, Path.Combine(DataDir, "WebView2"), new CoreWebView2EnvironmentOptions());
-            ctl = await env.CreateCoreWebView2ControllerAsync(Handle);
-            ctl.DefaultBackgroundColor = Bg;
-            ctl.Bounds = ClientRectangle;
-            ctl.IsVisible = WindowState != FormWindowState.Minimized;
-            ctl.AcceleratorKeyPressed += OnAcceleratorKey;
-            ctl.MoveFocusRequested += (s, a) => { a.Handled = true; ctl.MoveFocus(a.Reason); };   // Tab cycles inside the page
-
-            core = ctl.CoreWebView2;
-            var st = core.Settings;
-            st.AreDevToolsEnabled = devTools;
-            st.IsStatusBarEnabled = false;
-            st.IsPasswordAutosaveEnabled = false;
-            st.IsGeneralAutofillEnabled = false;
-            st.IsSwipeNavigationEnabled = false;
-            st.IsZoomControlEnabled = false;      // Ctrl+wheel and Ctrl +/- would zoom the page; the wheel spins the cards
-            st.IsPinchZoomEnabled = false;        // touch screens: pinching would zoom the whole page
-            st.IsReputationCheckingRequired = false;   // no SmartScreen look-ups: the page comes from inside the exe
-
-            core.AddHostObjectToScript("ns", new HostApi(this, settings, lib));
-            core.AddWebResourceRequestedFilter(Origin + "*", CoreWebView2WebResourceContext.All);
-            core.WebResourceRequested += OnWebResource;
-            core.NavigationStarting += OnNavigationStarting;
-            core.NewWindowRequested += OnNewWindow;
-            core.WebMessageReceived += OnWebMessage;
-            core.DownloadStarting += (s, a) => a.Cancel = true;
-            core.ContextMenuRequested += OnContextMenu;
-            core.ProcessFailed += OnProcessFailed;
-            core.PermissionRequested += (s, a) => a.State = CoreWebView2PermissionState.Deny;
-            core.DocumentTitleChanged += (s, a) => Text = string.IsNullOrWhiteSpace(core.DocumentTitle) ? "NoteSpin" : core.DocumentTitle;
-
-            core.Navigate(Origin + "index.html");
-            if (ContainsFocus) ctl.MoveFocus(CoreWebView2MoveFocusReason.Programmatic);
+            page.Core.NavigationCompleted -= OnFirstPageLoaded;
+            await Task.Delay(1500);
+            try { await Notes(); } catch { /* tried again when a note is opened in it */ }
         }
 
-        /* ---------- the page, served from the exe ---------- */
-
-        void OnWebResource(object sender, CoreWebView2WebResourceRequestedEventArgs e)
+        /// <summary>The note window, made on first use.</summary>
+        internal Task<NoteWindow> Notes()
         {
-            string path;
-            try { path = Uri.UnescapeDataString(new Uri(e.Request.Uri).AbsolutePath).TrimStart('/'); }
-            catch { path = ""; }
-            if (path.Length == 0) path = "index.html";
-            byte[] data = path.Equals("favicon.ico", StringComparison.OrdinalIgnoreCase) ? WebAssets.Favicon() : devWeb != null ? FromDisk(path) : WebAssets.Get(path);
-            e.Response = data == null
-                ? env.CreateWebResourceResponse(null, 404, "Not Found", "Content-Type: text/plain")
-                : env.CreateWebResourceResponse(new MemoryStream(data), 200, "OK", "Content-Type: " + WebAssets.MimeType(path) + "\r\nCache-Control: no-store");
+            if (notesReady == null || notesReady.IsFaulted) notesReady = MakeNotes();
+            return notesReady;
         }
 
-        // NOTESPIN_WEB=<the project's web folder> serves the page from disk instead of the exe, so a
-        // reload picks up changes while working on it (with NOTESPIN_DEVTOOLS=1 for F5 and F12).
-        readonly string devWeb = Environment.GetEnvironmentVariable("NOTESPIN_WEB") is string w && Directory.Exists(w) ? Path.GetFullPath(w) : null;
-
-        byte[] FromDisk(string path)
+        async Task<NoteWindow> MakeNotes()
         {
-            string full = Path.GetFullPath(Path.Combine(devWeb, path.Replace('/', '\\')));
-            if (!full.StartsWith(devWeb + "\\", StringComparison.OrdinalIgnoreCase) || !File.Exists(full)) return null;
-            try { return File.ReadAllBytes(full); } catch { return null; }
+            if (env == null) throw new InvalidOperationException("NoteSpin is still starting.");
+            var w = notes ?? new NoteWindow(this, settings);
+            notes = w;
+            w.FormClosed += (s, e) => { if (notes == w) { notes = null; notesReady = null; } };
+            await w.Start(env, new HostApi(this, settings, lib, w));
+            return w;
         }
 
-        void OnNavigationStarting(object sender, CoreWebView2NavigationStartingEventArgs e)
-        {
-            string uri = e.Uri ?? "";
-            if (uri.StartsWith(Origin, StringComparison.OrdinalIgnoreCase)) return;
-            e.Cancel = true;
-            if (uri.StartsWith("file:", StringComparison.OrdinalIgnoreCase)) OnDroppedFile(uri);
-            else OpenExternal(uri);
-        }
+        /// <summary>The note window if it's been made (else null).</summary>
+        internal NoteWindow NoteWin => notes;
+
+        /* ---------- messages to and from the page ---------- */
 
         // A .notespin file dropped on the window: the page offers to import it
         void OnDroppedFile(string fileUri)
@@ -161,7 +128,7 @@ namespace NoteSpin
         // The page asks for the real path of a dropped file: postMessageWithAdditionalObjects({type:'filePath', id}, [file])
         void OnWebMessage(object sender, CoreWebView2WebMessageReceivedEventArgs e)
         {
-            if (!(e.Source ?? "").StartsWith(Origin, StringComparison.OrdinalIgnoreCase)) return;
+            if (!(e.Source ?? "").StartsWith(PageHost.Origin, StringComparison.OrdinalIgnoreCase)) return;
             Dictionary<string, object> m;
             try { m = HostApi.Json.DeserializeObject(e.WebMessageAsJson) as Dictionary<string, object>; }
             catch { return; }
@@ -176,75 +143,12 @@ namespace NoteSpin
             Reply(rid, path);
         }
 
-        void OnNewWindow(object sender, CoreWebView2NewWindowRequestedEventArgs e)
-        {
-            e.Handled = true;   // never a second browser window
-            string uri = e.Uri ?? "";
-            if (!uri.StartsWith(Origin, StringComparison.OrdinalIgnoreCase)) OpenExternal(uri);
-        }
-
-        internal static void OpenExternal(string uri)
-        {
-            if (!Uri.TryCreate(uri, UriKind.Absolute, out Uri u)) return;
-            // only web and mail links are handed to Windows, never other protocol handlers
-            if (u.Scheme != Uri.UriSchemeHttp && u.Scheme != Uri.UriSchemeHttps && u.Scheme != Uri.UriSchemeMailto) return;
-            try { Process.Start(new ProcessStartInfo(u.AbsoluteUri) { UseShellExecute = true }); } catch { }
-        }
-
-        void OnContextMenu(object sender, CoreWebView2ContextMenuRequestedEventArgs e)
-        {
-            var items = e.MenuItems;
-            for (int i = items.Count - 1; i >= 0; i--)
-                if (BlockedMenuItems.Contains(items[i].Name) && !(devTools && items[i].Name == "inspectElement")) items.RemoveAt(i);
-            for (int i = items.Count - 1; i >= 0; i--)
-            {
-                if (items[i].Kind != CoreWebView2ContextMenuItemKind.Separator) continue;
-                if (i == 0 || i == items.Count - 1 || items[i - 1].Kind == CoreWebView2ContextMenuItemKind.Separator) items.RemoveAt(i);
-            }
-            if (items.Count == 0) e.Handled = true;
-        }
-
-        // Keys still reach the page; this only stops the browser's own find bar, reload, print, back… so the
-        // page can use Ctrl+F for its search. Editing keys (Ctrl+C/V/X/Z/A) aren't browser keys and keep working.
-        void OnAcceleratorKey(object sender, CoreWebView2AcceleratorKeyPressedEventArgs e)
-        {
-            if (e.KeyEventKind != CoreWebView2KeyEventKind.KeyDown && e.KeyEventKind != CoreWebView2KeyEventKind.SystemKeyDown) return;
-            var key = (Keys)(int)e.VirtualKey;
-            bool ctrl = (ModifierKeys & Keys.Control) != 0, shift = (ModifierKeys & Keys.Shift) != 0;
-            bool keep = devTools && (key == Keys.F12 || (ctrl && shift && key == Keys.I));
-            if (!keep) e.IsBrowserAcceleratorKeyEnabled = false;
-        }
-
-        void OnProcessFailed(object sender, CoreWebView2ProcessFailedEventArgs e)
-        {
-            if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessExited ||
-                e.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessUnresponsive)
-            {
-                Later(() => core?.Reload());
-            }
-            else if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited)
-            {
-                Later(() =>
-                {
-                    MessageBox.Show(this, "The web view stopped unexpectedly. Notes are saved as you type; reopen NoteSpin to carry on.",
-                        "NoteSpin", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    closeConfirmed = true;
-                    Close();
-                });
-            }
-        }
-
-        /* ---------- helpers for HostApi ---------- */
-
         internal void Later(Action a)
         {
             if (!IsDisposed && IsHandleCreated) BeginInvoke(a);
         }
 
-        void Post(Dictionary<string, object> m)
-        {
-            try { core?.PostWebMessageAsJson(HostApi.Json.Serialize(m)); } catch { }
-        }
+        internal void Post(object m) => page.Post(m);
 
         internal void Reply(string id, string path, string error = null)
         {
@@ -252,6 +156,59 @@ namespace NoteSpin
             if (error != null) d["error"] = error;
             Post(d);
         }
+
+        /// <summary>The main page's pixels per CSS pixel.</summary>
+        internal double PageScale => page.Scale;
+
+        /* ---------- putting a note back: the note window dropped on the cards ---------- */
+
+        /// <summary>
+        /// The note window is being moved with the mouse at p (on screen). Over this window (and with nothing
+        /// else in between), the page shows where to drop it.
+        /// </summary>
+        internal void DockHover(Point p)
+        {
+            var at = DockPoint(p);
+            if (at == null)
+            {
+                if (dockShown) { dockShown = false; _ = page.Eval("window.__nsDockHover && __nsDockHover(null)"); }
+                return;
+            }
+            int now = Environment.TickCount;
+            if (dockShown && now - dockSent < 30) return;
+            dockShown = true;
+            dockSent = now;
+            _ = page.Eval($"window.__nsDockHover && __nsDockHover({at.Value.X},{at.Value.Y})");
+        }
+
+        /// <summary>The note window was let go with the mouse at p: true when the page takes the note back.</summary>
+        internal async Task<bool> DockDrop(Point p)
+        {
+            var at = DockPoint(p);
+            dockShown = false;
+            if (at == null) { await page.Eval("window.__nsDockHover && __nsDockHover(null)"); return false; }
+            return await page.Eval($"!!(window.__nsDockDrop && __nsDockDrop({at.Value.X},{at.Value.Y}))") == "true";
+        }
+
+        // p in the page's CSS pixels, or null when the mouse isn't over this window's page
+        Point? DockPoint(Point p)
+        {
+            if (!Visible || WindowState == FormWindowState.Minimized || page.Core == null || notes == null) return null;
+            var c = PointToClient(p);
+            if (!ClientRectangle.Contains(c) || !Native.IsWindowBelowAt(notes.Handle, Handle, p)) return null;
+            double s = page.Scale;
+            return new Point((int)Math.Round(c.X / s), (int)Math.Round(c.Y / s));
+        }
+
+        /// <summary>The note in the note window comes back to this window (state: what the editor needs).</summary>
+        internal void DockIn(object state)
+        {
+            if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+            Activate();
+            Post(new Dictionary<string, object> { ["type"] = "dockIn", ["state"] = state });
+        }
+
+        /* ---------- helpers for HostApi ---------- */
 
         internal string TakeStartupFile()
         {
@@ -333,30 +290,30 @@ namespace NoteSpin
         protected override void OnResize(EventArgs e)
         {
             base.OnResize(e);
-            if (ctl == null) return;
-            ctl.IsVisible = WindowState != FormWindowState.Minimized;
-            if (ctl.IsVisible) ctl.Bounds = ClientRectangle;
+            page?.Fit();
         }
 
         protected override void OnMove(EventArgs e)
         {
             base.OnMove(e);
-            ctl?.NotifyParentWindowPositionChanged();
+            page?.Moved();
         }
 
         protected override void OnActivated(EventArgs e)
         {
             base.OnActivated(e);
-            ctl?.MoveFocus(CoreWebView2MoveFocusReason.Programmatic);
+            page?.Focus();
         }
 
-        // Notes save as you type; before closing, the page gets up to 5 s to write the last change
-        // (window.__nsBusy() starts any save that's waiting and returns true while one is being written).
+        // Notes save as you type; before closing, each page gets up to 5 s to write the last change.
+        // A note left open in the note window opens there again next time (unless it's locked).
         protected override async void OnFormClosing(FormClosingEventArgs e)
         {
-            if (closeConfirmed || core == null || e.CloseReason == CloseReason.WindowsShutDown)
+            if (closeConfirmed || page.Core == null || e.CloseReason == CloseReason.WindowsShutDown)
             {
+                RememberNoteWindow();
                 SavePlacement();
+                notes?.CloseForGood();
                 base.OnFormClosing(e);
                 return;
             }
@@ -365,21 +322,20 @@ namespace NoteSpin
             closing = true;
             try
             {
-                for (int i = 0; i < 100; i++)
-                {
-                    string busy = await core.ExecuteScriptAsync("typeof window.__nsBusy === 'function' && window.__nsBusy() === true");
-                    if (busy != "true") break;
-                    await Task.Delay(50);
-                }
+                await page.WaitWhileBusy();
+                if (notes != null) await notes.WaitWhileBusy();
             }
-            catch { /* the page isn't answering: close anyway */ }
+            catch { /* a page isn't answering: close anyway */ }
             closeConfirmed = true;
             Close();
         }
 
+        // (if Windows closed the note window first, it remembered for itself)
+        void RememberNoteWindow() => notes?.Remember();
+
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
-            try { ctl?.Close(); } catch { }
+            page.Close();
             base.OnFormClosed(e);
         }
 

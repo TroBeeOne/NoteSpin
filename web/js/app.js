@@ -41,11 +41,17 @@ const app = {
   noteChanged() {},
   async editorClosed(id, {emptied, deleted} = {}) {
     await loadNotes(id);
-    if (emptied) toast('The empty note was deleted.', {action: {label: 'Undo', fn: () => restoreNote(emptied)}, timeout: 7000});
-    if (deleted) toast('Note deleted.');
+    noteGone({emptied, deleted});
     $('stage').querySelector('canvas')?.focus();
   },
+  popOut: opts => popOut(opts),
 };
+
+// After a note closed with nothing in it (deleted, with Undo), or was deleted
+function noteGone({emptied, deleted}) {
+  if (emptied) toast('The empty note was deleted.', {action: {label: 'Undo', fn: () => restoreNote(emptied)}, timeout: 7000});
+  if (deleted) toast('Note deleted.');
+}
 
 /* ---------- loading ---------- */
 
@@ -296,9 +302,17 @@ function focusSearch() {
 
 /* ---------- notes ---------- */
 
-async function openItem(item) {
+/**
+ * Opens a note: over the cards, or in the note window when that's the setting or a note is already open
+ * there (only one note is open at a time; the one in the window makes way).
+ * inWindow: open it in the note window whatever the setting. activate: the note window takes the focus
+ * (not when NoteSpin starts with a note in it).
+ */
+async function openItem(item, {inWindow = false, activate = true} = {}) {
   if (!item || editor.isOpen) return;
   if (item.kind === 'category') { enterCategory(item.id); return; }
+  const win = noteWindowState();
+  if (win.open && win.id === item.id) { NS.call('NoteWinFocus'); return; }
   const from = spinner.frontRect();
   let note;
   try { note = await NS.call('NoteGet', item.id); }
@@ -311,6 +325,7 @@ async function openItem(item) {
     preview: stored?.preview || '', search: note.locked ? note.title.toLocaleLowerCase() : null,
     category: cat && cat.id !== GENERAL_ID ? cat.name : '', categoryColor: cat?.color,
   };
+  let html = note.body, session = null;
   if (note.locked) {
     let r;
     for (;;) {   // backing out of "Delete?" returns to the password
@@ -319,15 +334,112 @@ async function openItem(item) {
       if (await deleteLockedNote(note, original)) return;
     }
     if (!r) return;
-    editor.open(note, {html: r.text, session: r.session, from, highlight: state.terms, original});
-  } else {
-    editor.open(note, {html: note.body, from, highlight: state.terms, original});
+    html = r.text;
+    session = r.session;
   }
+  if (editor.isOpen) return;   // another note opened while the password was asked for
+  if (inWindow || win.open || noteWindowState().open || ownWindow()) {
+    const {body, ...meta} = note;
+    NS.call('NoteWinOpen', JSON.stringify({
+      note: meta, categoryId: note.cat, html, key: session ? await session.export() : null, original, highlight: state.terms,
+    }), activate);
+    return;
+  }
+  editor.open(note, {html, session, from, highlight: state.terms, original});
 }
 
 function newNote() {
   if (editor.isOpen || dialogOpen()) return;
-  editor.open(null, {categoryId: state.view === 'category' ? state.catId : GENERAL_ID});
+  const categoryId = state.view === 'category' ? state.catId : GENERAL_ID;
+  if (noteWindowState().open || ownWindow()) NS.call('NoteWinOpen', JSON.stringify({note: null, categoryId, html: ''}), true);
+  else editor.open(null, {categoryId});
+}
+
+/* ---------- the note window: a note outside this window ---------- */
+
+const ownWindow = () => NS.prefGet('noteWindow') === '1';
+
+function noteWindowState() {
+  try { return NS.callSync('NoteWinState') || {open: false}; } catch { return {open: false}; }
+}
+
+/** Before the notebook changes: the note in the note window closes (it belongs to this notebook). */
+async function closeNoteWindow() {
+  if (noteWindowState().open) await NS.closeNoteWindow();
+}
+
+/** The open note moves to the note window (the button, or dragged out: drag carries on with the window). */
+async function popOut({drag = false, grabX = 0, grabY = 0, pointerType = 'mouse'} = {}) {
+  if (!editor.isOpen) return;
+  const st = await editor.exportState();
+  editor.detach();
+  try { await NS.call('NoteWinPopOut', JSON.stringify(st), drag, grabX, grabY, pointerType); }
+  catch (e) {
+    await editor.openState(st);   // it stays here
+    toast('The note window couldn\'t open: ' + e.message, {kind: 'error'});
+    return;
+  }
+  await loadNotes(st.note?.id ?? spinner.current()?.id);
+}
+
+// The note window saves as you type: its card here is brought up to date once the wheel is still
+let refreshTimer = 0;
+function refreshSoon() {
+  clearTimeout(refreshTimer);
+  const tick = () => {
+    if (spinner.mode !== 'idle' || editor.isOpen) { refreshTimer = setTimeout(tick, 300); return; }
+    loadNotes(spinner.current()?.id).catch(() => {});
+  };
+  refreshTimer = setTimeout(tick, 350);
+}
+
+async function noteWindowClosed(m) {
+  clearTimeout(refreshTimer);
+  await loadNotes(spinner.current()?.id);
+  noteGone(m);
+}
+
+/** The note in the note window comes back here: it opens over the cards, from its own card. */
+async function dockIn(st) {
+  hideDropZone();
+  if (editor.isOpen) await editor.close();
+  await app.reloadCategories();
+  await loadNotes(st.note?.id ?? spinner.current()?.id);
+  // the wheel draws its cards on the next frames; the note grows out of its card once it's there
+  await Promise.race([new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))), new Promise(r => setTimeout(r, 120))]);
+  await editor.openState(st, {from: st.note ? spinner.frontRect() : null});
+}
+
+// While the note window is moved over this window, a drop zone shows over the front card: let go there
+// and the note comes back. (The rest of the window is free, so a note can still sit over NoteSpin.)
+function dropZoneRect() {
+  const s = $('stage').getBoundingClientRect();
+  const r = spinner.frontRect();
+  if (r && r.width > 40) {
+    const left = Math.max(s.left + 8, r.left - 18), top = Math.max(s.top + 8, r.top - 18);
+    return {left, top, width: Math.min(s.right - 8, r.left + r.width + 18) - left, height: Math.min(s.bottom - 8, r.top + r.height + 18) - top};
+  }
+  const w = Math.min(320, s.width * 0.6), h = Math.min(380, s.height * 0.6);
+  return {left: s.left + (s.width - w) / 2, top: s.top + (s.height - h) / 2, width: w, height: h};
+}
+
+function dockHover(x, y) {
+  const z = $('dropZone');
+  if (x == null || editor.isOpen || dialogOpen()) { hideDropZone(); return false; }
+  if (z.hidden) {
+    const r = dropZoneRect();
+    Object.assign(z.style, {left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px'});
+    z.hidden = false;
+  }
+  const r = z.getBoundingClientRect();
+  const hit = x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  z.classList.toggle('on', hit);
+  return hit;
+}
+
+function hideDropZone() {
+  $('dropZone').hidden = true;
+  $('dropZone').classList.remove('on');
 }
 
 // A locked note whose password is forgotten can still be deleted (with Undo, in case it was the wrong one).
@@ -387,14 +499,17 @@ async function afterNotebookChange(st) {
 }
 
 async function switchNotebook(path) {
-  try { await afterNotebookChange(await NS.call('NbOpen', path)); }
-  catch (e) { alertDlg('Couldn\'t open the notebook', e.message); }
+  try {
+    await closeNoteWindow();
+    await afterNotebookChange(await NS.call('NbOpen', path));
+  } catch (e) { alertDlg('Couldn\'t open the notebook', e.message); }
 }
 
 async function newNotebook() {
   const name = await promptDlg({title: 'New notebook', label: 'Name', placeholder: 'e.g. Work', ok: 'Create'});
   if (!name) return;
   try {
+    await closeNoteWindow();
     await afterNotebookChange(await NS.call('NbCreate', name));
     toast(`Created “${state.nb.name}”.`);
   } catch (e) { alertDlg('Couldn\'t create the notebook', e.message); }
@@ -416,6 +531,7 @@ async function deleteNotebook() {
   });
   if (!ok) return;
   try {
+    await closeNoteWindow();
     await afterNotebookChange(await NS.call('NbDelete', nb.path));
     toast(`“${nb.name}” is in the Recycle Bin.`);
   } catch (e) { alertDlg('Couldn\'t delete the notebook', e.message); }
@@ -458,6 +574,7 @@ async function importFile(path) {
   });
   if (choice === 'add') {
     try {
+      await closeNoteWindow();
       await afterNotebookChange(await NS.call('NbImportAsNew', path));
       toast(`Added “${state.nb.name}” to your notebooks.`);
     } catch (e) { alertDlg('The backup wasn\'t imported', e.message); }
@@ -469,6 +586,7 @@ async function importFile(path) {
     });
     if (!ok) return;
     try {
+      await closeNoteWindow();
       const st = await NS.call('NbReplaceCurrent', path);
       await afterNotebookChange(st);
       toast(`“${cur}” now holds the backup's notes.`, {action: {label: 'Show the safety copy', fn: () => NS.call('ShowFolder', 'safety')}, timeout: 9000});
@@ -504,7 +622,11 @@ async function manageCategories() {
     for (const n of state.notes) m.set(n.cat, (m.get(n.cat) || 0) + 1);
     return m;
   };
-  const changed = async () => { await loadNotes(spinner.current()?.id); render(); };
+  const changed = async () => {
+    await loadNotes(spinner.current()?.id);
+    render();
+    NS.call('ToNote', JSON.stringify({type: 'categoriesChanged'})).catch(() => {});   // a note in the note window shows the change
+  };
   const render = () => {
     const cnt = counts();
     const cats = [...state.cats].sort((a, b) => (b.id === GENERAL_ID) - (a.id === GENERAL_ID) || collator.compare(a.name, b.name));
@@ -590,6 +712,7 @@ async function changeNotebooksFolder() {
   });
   if (!choice) return null;
   try {
+    await closeNoteWindow();
     await afterNotebookChange(await NS.call('NbSetFolder', dir, choice === 'move'));
     toast(choice === 'move' ? `Notebooks moved to ${dir}` : `Now using the notebooks in ${dir}`, {timeout: 6000});
   } catch (e) {
@@ -614,6 +737,10 @@ async function showSettings() {
       <div class="row-btns"><button class="btn" type="button" id="dirChange">Change…</button>
         <button class="btn" type="button" data-folder="notebooks">Open folder</button>
         <button class="btn" type="button" data-folder="safety">Safety Backups</button></div>
+      <h3>Notes</h3>
+      <label class="check"><input type="checkbox" id="ownWindow"${ownWindow() ? ' checked' : ''}> Always open notes in their own window</label>
+      <p class="hint">Otherwise a note opens over the cards. To give it a window of its own, drag it out of NoteSpin by its
+      top strip, or click <svg class="inline-icon"><use href="#i-popout"/></svg>. Only one note is open at a time.</p>
       <h3>Opening backups</h3>
       <p>Open <strong>.notespin</strong> files with NoteSpin when they're double-clicked in File Explorer.</p>
       <div class="row-btns"><button class="btn" type="button" id="assocBtn">${assocLabel(info.fileAssoc)}</button>
@@ -640,6 +767,7 @@ async function showSettings() {
           box.querySelector('#assocState').textContent = on ? 'On for this copy of NoteSpin.' : 'Off.';
         } catch (err) { alertDlg('Couldn\'t change it', err.message); }
       });
+      box.querySelector('#ownWindow').addEventListener('change', e => NS.prefSet('noteWindow', e.target.checked ? '1' : '0'));
       box.querySelectorAll('[data-folder]').forEach(b => b.addEventListener('click', () => NS.call('ShowFolder', b.dataset.folder)));
       box.querySelector('#dirChange').addEventListener('click', async () => {
         const dir = await changeNotebooksFolder();
@@ -734,6 +862,13 @@ function wire() {
   document.addEventListener('keydown', onKey);
   // a .notespin file dropped on the window is offered as a backup to import
   NS.on('importFile', m => importFile(m.path));
+  // from the note window
+  NS.on('noteSaved', refreshSoon);
+  NS.on('categoriesChanged', refreshSoon);
+  NS.on('noteClosed', m => noteWindowClosed(m).catch(() => {}));
+  NS.on('dockIn', m => dockIn(m.state).catch(e => toast('Couldn\'t bring the note back: ' + e.message, {kind: 'error'})));
+  window.__nsDockHover = dockHover;
+  window.__nsDockDrop = (x, y) => { const hit = dockHover(x, y); hideDropZone(); return hit; };
   const hasFiles = e => [...(e.dataTransfer?.types || [])].includes('Files');
   addEventListener('dragover', e => { if (hasFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = editor.isOpen ? 'none' : 'copy'; } });
   addEventListener('drop', async e => {
@@ -787,9 +922,12 @@ async function start() {
       `“${notice.missing}” isn't there (an unplugged drive, perhaps), so NoteSpin is using ${notice.using} for now. It goes back to the chosen folder when it's available again.`);
   }
   window.__nsBusy = () => editor.busy();
-  window.__ns = {state, spinner, editor, app, importFile};   // for testing
+  window.__ns = {state, spinner, editor, app, importFile, openItem, popOut, noteWindowState};   // for testing
   const file = await NS.call('TakeStartupFile').catch(() => null);
-  if (file) importFile(file);
+  if (file) { importFile(file); return; }
+  // the note left open in the note window when NoteSpin closed opens there again
+  const reopen = await NS.call('TakeNoteWindowNote').catch(() => null);
+  if (reopen && state.notes.some(n => n.id === reopen && !n.locked)) openItem({id: reopen, kind: 'note'}, {inWindow: true, activate: false});
 }
 
 start();
