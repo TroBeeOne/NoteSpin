@@ -1,0 +1,5 @@
+# Store text files with LF and check them out with each PC's own line endings,
+# so different Git settings between users don't show every line as changed.
+* text=auto
+*.ico binary
+*.png binary
