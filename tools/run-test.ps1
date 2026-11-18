@@ -1,5 +1,6 @@
 # Starts NoteSpin for testing: a throwaway data folder, developer tools on, and the DevTools protocol on
-# port 9333 so tools\cdp.mjs can drive it. Closes any NoteSpin that's already running first.
+# port 9333 so tools\cdp.mjs can drive it. Closes a test copy (a build in bin\) that's still running first;
+# a NoteSpin you're using (from dist\ or anywhere else) is left alone.
 #   .\tools\run-test.ps1 [-Data <folder>] [-Fresh] [-Exe <path>] [-Size 1400x900] [-Open <file>] [-Embedded]
 param(
   [string]$Data = (Join-Path $PSScriptRoot 'out\data'),
@@ -11,7 +12,7 @@ param(
   [string]$Notebooks = ''   # stands in for Documents\NoteSpin (else the notebooks stay in the data folder)
 )
 $ErrorActionPreference = 'Stop'
-Get-Process NoteSpin -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process NoteSpin -ErrorAction SilentlyContinue | Where-Object { $_.Path -like (Join-Path (Split-Path -Parent $PSScriptRoot) 'bin\*') } | Stop-Process -Force
 Start-Sleep -Milliseconds 400
 if ($Fresh -and (Test-Path $Data)) { Remove-Item $Data -Recurse -Force }
 New-Item -ItemType Directory -Force $Data | Out-Null

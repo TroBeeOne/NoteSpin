@@ -3,7 +3,7 @@
 import {Spinner} from './spinner.js';
 import {Editor, askPassword} from './editor.js';
 import {LockSession} from './crypto.js';
-import {PALETTE, GENERAL_ID, pickColor, analyze, parseHtml} from './notes.js';
+import {PALETTE, GENERAL_ID, pickColor, analyze, parseHtml, textToBlocks} from './notes.js';
 import {dialog, confirmDlg, promptDlg, alertDlg, toast, menu, esc, dialogOpen, menuOpen} from './ui.js';
 
 const $ = id => document.getElementById(id);
@@ -303,16 +303,15 @@ function focusSearch() {
 /* ---------- notes ---------- */
 
 /**
- * Opens a note: over the cards, or in the note window when that's the setting or a note is already open
- * there (only one note is open at a time; the one in the window makes way).
- * inWindow: open it in the note window whatever the setting. activate: the note window takes the focus
- * (not when NoteSpin starts with a note in it).
+ * Opens a note: over the cards, or in a window of its own when that's the setting. A note is open in one
+ * place at a time: one that's out in its window already just comes to the front.
+ * inWindow: open it in a window of its own whatever the setting. activate: the window takes the focus
+ * (not when NoteSpin starts with notes out).
  */
 async function openItem(item, {inWindow = false, activate = true} = {}) {
   if (!item || editor.isOpen) return;
   if (item.kind === 'category') { enterCategory(item.id); return; }
-  const win = noteWindowState();
-  if (win.open && win.id === item.id) { NS.call('NoteWinFocus'); return; }
+  if (isOut(item.id)) { NS.call('NoteWinFocus', item.id); return; }
   const from = spinner.frontRect();
   let note;
   try { note = await NS.call('NoteGet', item.id); }
@@ -338,7 +337,8 @@ async function openItem(item, {inWindow = false, activate = true} = {}) {
     session = r.session;
   }
   if (editor.isOpen) return;   // another note opened while the password was asked for
-  if (inWindow || win.open || noteWindowState().open || ownWindow()) {
+  if (isOut(note.id)) { NS.call('NoteWinFocus', note.id); return; }   // or it went out in the meantime
+  if (inWindow || ownWindow()) {
     const {body, ...meta} = note;
     NS.call('NoteWinOpen', JSON.stringify({
       note: meta, categoryId: note.cat, html, key: session ? await session.export() : null, original, highlight: state.terms,
@@ -351,24 +351,27 @@ async function openItem(item, {inWindow = false, activate = true} = {}) {
 function newNote() {
   if (editor.isOpen || dialogOpen()) return;
   const categoryId = state.view === 'category' ? state.catId : GENERAL_ID;
-  if (noteWindowState().open || ownWindow()) NS.call('NoteWinOpen', JSON.stringify({note: null, categoryId, html: ''}), true);
+  if (ownWindow()) NS.call('NoteWinOpen', JSON.stringify({note: null, categoryId, html: ''}), true);
   else editor.open(null, {categoryId});
 }
 
-/* ---------- the note window: a note outside this window ---------- */
+/* ---------- note windows: notes outside this window, each in a window of its own ---------- */
 
 const ownWindow = () => NS.prefGet('noteWindow') === '1';
 
+/** The note windows with a note in them: [{win, id}] (id null for a new note that isn't saved yet). */
 function noteWindowState() {
-  try { return NS.callSync('NoteWinState') || {open: false}; } catch { return {open: false}; }
+  try { return NS.callSync('NoteWinState') || []; } catch { return []; }
 }
 
-/** Before the notebook changes: the note in the note window closes (it belongs to this notebook). */
+const isOut = id => !!id && noteWindowState().some(w => w.id === id);
+
+/** Before the notebook changes: every note in a note window closes, saved (they belong to this notebook). */
 async function closeNoteWindow() {
-  if (noteWindowState().open) await NS.closeNoteWindow();
+  await Promise.all(noteWindowState().map(w => NS.closeNoteWindow(w.win)));
 }
 
-/** The open note moves to the note window (the button, or dragged out: drag carries on with the window). */
+/** The open note moves to a window of its own (the button, or dragged out: drag carries on with the window). */
 async function popOut({drag = false, grabX = 0, grabY = 0, pointerType = 'mouse'} = {}) {
   if (!editor.isOpen) return;
   const st = await editor.exportState();
@@ -382,7 +385,7 @@ async function popOut({drag = false, grabX = 0, grabY = 0, pointerType = 'mouse'
   await loadNotes(st.note?.id ?? spinner.current()?.id);
 }
 
-// The note window saves as you type: its card here is brought up to date once the wheel is still
+// Note windows save as you type: their cards here are brought up to date once the wheel is still
 let refreshTimer = 0;
 function refreshSoon() {
   clearTimeout(refreshTimer);
@@ -394,12 +397,19 @@ function refreshSoon() {
 }
 
 async function noteWindowClosed(m) {
-  clearTimeout(refreshTimer);
-  await loadNotes(spinner.current()?.id);
+  // a note open here too: the cards catch up when it closes (they're behind it)
+  if (editor.isOpen) refreshSoon();
+  else {
+    clearTimeout(refreshTimer);
+    await loadNotes(spinner.current()?.id);
+  }
   noteGone(m);
 }
 
-/** The note in the note window comes back here: it opens over the cards, from its own card. */
+/**
+ * A note in a note window comes back here: it opens over the cards, from its own card. A note open here
+ * already closes first (saved).
+ */
 async function dockIn(st) {
   hideDropZone();
   if (editor.isOpen) await editor.close();
@@ -410,8 +420,9 @@ async function dockIn(st) {
   await editor.openState(st, {from: st.note ? spinner.frontRect() : null});
 }
 
-// While the note window is moved over this window, a drop zone shows over the front card: let go there
+// While a note window is moved over this window, a drop zone shows over the front card: let go there
 // and the note comes back. (The rest of the window is free, so a note can still sit over NoteSpin.)
+// It shows over a note open here too, which then makes way.
 function dropZoneRect() {
   const s = $('stage').getBoundingClientRect();
   const r = spinner.frontRect();
@@ -425,7 +436,7 @@ function dropZoneRect() {
 
 function dockHover(x, y) {
   const z = $('dropZone');
-  if (x == null || editor.isOpen || dialogOpen()) { hideDropZone(); return false; }
+  if (x == null || editor.closing || dialogOpen()) { hideDropZone(); return false; }
   if (z.hidden) {
     const r = dropZoneRect();
     Object.assign(z.style, {left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px'});
@@ -481,6 +492,7 @@ function notebookMenu() {
     '-',
     {label: 'Export a backup…', hint: '.notespin', onClick: exportBackup},
     {label: 'Import a backup…', onClick: importBackup},
+    {label: 'Import from Sticky Notes…', onClick: importStickyNotes},
     '-',
     {label: 'Open the notebooks folder', onClick: () => NS.call('ShowFolder', 'notebooks')},
   ]);
@@ -592,6 +604,96 @@ async function importFile(path) {
       toast(`“${cur}” now holds the backup's notes.`, {action: {label: 'Show the safety copy', fn: () => NS.call('ShowFolder', 'safety')}, timeout: 9000});
     } catch (e) { alertDlg('The backup wasn\'t restored', e.message); }
   }
+}
+
+/* ---------- copying notes from Microsoft Sticky Notes ----------
+   A one-off copy: the notes picked become new notes in this notebook, with the dates they had there.
+   Sticky Notes isn't changed (the app reads a copy of its files, see src\StickyNotes.cs). Only the text
+   comes across. Its colours become categories: yellow, the colour its notes start with, is General (yellow
+   here too); the others get a category named after the colour, made if there isn't one. Notes copied
+   before are marked, and start unticked, so running it again doesn't make doubles by accident. */
+
+const STICKY_COLORS = {Green: '#CDEFC0', Pink: '#FFCFE2', Blue: '#CBE4FF', Purple: '#E2D4FA', Gray: '#E4E6EA', Charcoal: '#D3D6DC', White: '#F4F4F1'};
+
+function stickyCategory(theme) {
+  const name = String(theme || '').trim();
+  const general = state.catMap.get(GENERAL_ID);
+  if (!name || (/^yellow$/i.test(name) && !app.categoryByName(name))) return {name: '', label: general?.name || 'General', color: general?.color};
+  const have = app.categoryByName(name);
+  const label = have?.name || name.charAt(0).toUpperCase() + name.slice(1);
+  return {name: label, label, color: have?.color || STICKY_COLORS[label] || pickColor(state.cats)};
+}
+
+async function importStickyNotes() {
+  if (editor.isOpen) await editor.close();
+  let r;
+  try { r = await NS.call('StickyNotesRead'); }
+  catch (e) { alertDlg('Couldn\'t read Sticky Notes', e.message); return; }
+  if (!r.found) {
+    alertDlg('Sticky Notes isn\'t on this PC', 'Microsoft Sticky Notes hasn\'t kept any notes on this PC, so there\'s nothing to copy.');
+    return;
+  }
+  const notes = r.notes.map(n => {
+    const text = n.lines.filter(l => l.trim());
+    return {...n, title: text[0]?.trim() || 'Untitled', prev: text.slice(1, 3).join(' · '), cat: stickyCategory(n.theme)};
+  });
+  if (!notes.length) { alertDlg('No notes in Sticky Notes', 'Sticky Notes has no notes with text in them.'); return; }
+
+  const wrap = document.createElement('div');
+  wrap.innerHTML = `<p class="hint">Tick the notes to copy into “${esc(state.nb.name)}”. Each becomes a new note here, with the
+    dates it had; Sticky Notes itself isn't changed. Only the text comes across (no pictures or handwriting).
+    Its colours become categories.</p>
+    <div class="sn-tools"><button class="btn" type="button" data-sel="all">Select all</button>
+      <button class="btn" type="button" data-sel="none">Select none</button><span class="hint sn-count"></span></div>
+    <div class="sn-list">${notes.map((n, i) => `
+      <label class="sn-row"><input type="checkbox" data-i="${i}"${n.copied ? '' : ' checked'}>
+        <span class="swatch" style="background:${esc(n.cat.color || '')}" title="${esc(n.theme || 'No colour')} in Sticky Notes: ${esc(n.cat.label)} here"></span>
+        <span class="sn-text"><span class="sn-title">${esc(n.title)}</span><span class="sn-prev">${esc(n.prev) || '&nbsp;'}</span></span>
+        <span class="sn-side"><span>${esc(shortDate(n.updated))}</span>${n.copied ? '<span class="sn-done">Copied before</span>' : ''}</span>
+      </label>`).join('')}</div>`;
+  const boxes = [...wrap.querySelectorAll('input[data-i]')];
+  const picked = () => boxes.filter(b => b.checked).map(b => notes[+b.dataset.i]);
+
+  const count = await dialog({
+    title: 'Import from Sticky Notes',
+    wide: true,
+    node: wrap,
+    buttons: [{label: 'Cancel', value: null, left: true}, {label: 'Copy', value: 'copy', primary: true}],
+    init: box => {
+      const go = box.querySelector('.dlg-buttons .btn.primary');
+      const update = () => {
+        const n = picked().length;
+        wrap.querySelector('.sn-count').textContent = `${n} of ${notes.length} ticked`;
+        go.textContent = n ? `Copy ${plural(n, 'note')}` : 'Copy';
+        go.disabled = !n;
+      };
+      boxes.forEach(b => b.addEventListener('change', update));
+      wrap.querySelectorAll('[data-sel]').forEach(b => b.addEventListener('click', () => {
+        boxes.forEach(x => { x.checked = b.dataset.sel === 'all'; });
+        update();
+      }));
+      update();
+    },
+    submit: async () => {
+      const list = picked();
+      if (!list.length) return false;
+      const out = [];
+      for (const n of list) {
+        const doc = analyze(textToBlocks(n.lines.join('\n')));
+        if (doc.empty) continue;
+        out.push({
+          title: doc.title, body: doc.html, preview: JSON.stringify(doc.lines), search: doc.search,
+          category: n.cat.name, categoryColor: n.cat.color, created: n.created, updated: n.updated, source: 'sticky:' + n.sid,
+        });
+      }
+      try { return await NS.call('StickyNotesCopy', JSON.stringify(out)); }
+      catch (e) { alertDlg('The notes weren\'t copied', e.message); return false; }
+    },
+  });
+  if (!count) return;
+  await loadNotes(spinner.current()?.id);
+  NS.call('ToNote', JSON.stringify({type: 'categoriesChanged'})).catch(() => {});   // new categories show in note windows
+  toast(`Copied ${plural(count, 'note')} from Sticky Notes.`);
 }
 
 /* ---------- categories ---------- */
@@ -740,7 +842,11 @@ async function showSettings() {
       <h3>Notes</h3>
       <label class="check"><input type="checkbox" id="ownWindow"${ownWindow() ? ' checked' : ''}> Always open notes in their own window</label>
       <p class="hint">Otherwise a note opens over the cards. To give it a window of its own, drag it out of NoteSpin by its
-      top strip, or click <svg class="inline-icon"><use href="#i-popout"/></svg>. Only one note is open at a time.</p>
+      top strip, or click <svg class="inline-icon"><use href="#i-popout"/></svg>. Any number of notes can be out at once,
+      each in its own window.</p>
+      <h3>Microsoft Sticky Notes</h3>
+      <p class="hint">Copy notes from the Sticky Notes app into this notebook, picking which ones. Sticky Notes isn't changed.</p>
+      <div class="row-btns" style="margin-bottom:4px"><button class="btn" type="button" id="stickyBtn">Import from Sticky Notes…</button></div>
       <h3>Opening backups</h3>
       <p>Open <strong>.notespin</strong> files with NoteSpin when they're double-clicked in File Explorer.</p>
       <div class="row-btns"><button class="btn" type="button" id="assocBtn">${assocLabel(info.fileAssoc)}</button>
@@ -768,6 +874,7 @@ async function showSettings() {
         } catch (err) { alertDlg('Couldn\'t change it', err.message); }
       });
       box.querySelector('#ownWindow').addEventListener('change', e => NS.prefSet('noteWindow', e.target.checked ? '1' : '0'));
+      box.querySelector('#stickyBtn').addEventListener('click', importStickyNotes);
       box.querySelectorAll('[data-folder]').forEach(b => b.addEventListener('click', () => NS.call('ShowFolder', b.dataset.folder)));
       box.querySelector('#dirChange').addEventListener('click', async () => {
         const dir = await changeNotebooksFolder();
@@ -922,12 +1029,14 @@ async function start() {
       `“${notice.missing}” isn't there (an unplugged drive, perhaps), so NoteSpin is using ${notice.using} for now. It goes back to the chosen folder when it's available again.`);
   }
   window.__nsBusy = () => editor.busy();
-  window.__ns = {state, spinner, editor, app, importFile, openItem, popOut, noteWindowState};   // for testing
+  window.__ns = {state, spinner, editor, app, importFile, openItem, popOut, noteWindowState, closeNoteWindow};   // for testing
   const file = await NS.call('TakeStartupFile').catch(() => null);
   if (file) { importFile(file); return; }
-  // the note left open in the note window when NoteSpin closed opens there again
-  const reopen = await NS.call('TakeNoteWindowNote').catch(() => null);
-  if (reopen && state.notes.some(n => n.id === reopen && !n.locked)) openItem({id: reopen, kind: 'note'}, {inWindow: true, activate: false});
+  // the notes that were out in their windows when NoteSpin closed go out again
+  const reopen = await NS.call('TakeNoteWindowNotes').catch(() => null) || [];
+  for (const id of reopen) {
+    if (state.notes.some(n => n.id === id && !n.locked)) await openItem({id, kind: 'note'}, {inWindow: true, activate: false});
+  }
 }
 
 start();

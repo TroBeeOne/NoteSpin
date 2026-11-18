@@ -9,11 +9,12 @@ It runs on .NET Framework 4.8 and the Microsoft Edge WebView2 Runtime, both part
 - [Getting started](#getting-started)
 - [The wheel](#the-wheel)
 - [Writing notes](#writing-notes)
-- [A note in its own window](#a-note-in-its-own-window)
+- [Notes in their own windows](#notes-in-their-own-windows)
 - [Categories](#categories)
 - [Show, order and search](#show-order-and-search)
 - [Locking a note](#locking-a-note)
 - [Notebooks, folders and backups](#notebooks-folders-and-backups)
+- [Copying notes from Sticky Notes](#copying-notes-from-sticky-notes)
 - [Keyboard, mouse and touch](#keyboard-mouse-and-touch)
 - [Questions](#questions)
 - [Building and changing NoteSpin](#building-and-changing-notespin)
@@ -88,29 +89,32 @@ down to a strip of icons (it folds by itself in a narrow window). Everything siz
 - **Deleting**: the bin button in a note. A note closed with nothing in it is deleted automatically, with
   **Undo** in the message that appears.
 
-## A note in its own window
+## Notes in their own windows
 
 A note can leave the wheel and sit on the desktop in a small window of its own, like a sticky note: handy for
-a list you're working through, even with NoteSpin minimized.
+a list you're working through, even with NoteSpin minimized. Any number of notes can be out at once, each in
+its own window with its own taskbar button.
 
 - **Drag it out.** Open a note, grab its top strip (the coloured band, away from the category box and the
   buttons) and drag it past the edge of the NoteSpin window. It becomes a window that follows the mouse; let
   go where you want it. Or click the **pop-out button** in the band.
-- **Or always.** *Settings → Notes → Always open notes in their own window* opens every note that way.
-- **One note at a time.** While a note is in its window, opening another card (or *New note*) opens that one
-  in the window instead, after saving the one that was there. Clicking the card of the note that's already
-  out brings its window to the front.
-- **The window.** Move it by its top strip and resize it from its edges; the **pin** keeps it on top of
-  other windows. It remembers its place and size. Esc or × closes the note and the window goes away (an
-  emptied note is deleted as usual, with Undo in the NoteSpin window). **Ctrl+N** in it starts a new note there.
-- **Minimize NoteSpin** and the note stays on the desktop. **Closing NoteSpin** closes it too, and the note
-  opens in its window again next time NoteSpin starts (unless it's locked).
-- **Putting it back.** The **put-back button** in its band, or drag the window over the NoteSpin window and
+- **Or always.** *Settings → Notes → Always open notes in their own window* opens every note that way, each
+  in a window of its own.
+- **A note is open in one place at a time.** Clicking the card of a note that's out brings its window to the
+  front instead of opening it twice. Other cards open over the wheel as usual while notes are out.
+- **The window.** Move it by its top strip and resize it from its edges (the thin coloured border around the
+  note); the **pin** keeps it on top of other windows. Each note remembers its own place, size and pin, and
+  comes back there next time it's out. A note that hasn't been out before appears a step down and to the right
+  of the last one, so they don't stack up. Esc or × closes the note and the window goes away (an emptied note is
+  deleted as usual, with Undo in the NoteSpin window). **Ctrl+N** in it starts a new note in another window.
+- **Minimize NoteSpin** and the notes stay on the desktop. **Closing NoteSpin** closes them too, and they open
+  in their windows again next time NoteSpin starts (except locked ones).
+- **Putting one back.** The **put-back button** in its band, or drag the window over the NoteSpin window and
   drop it on the outline that appears around the front card. Only that outline takes it back, so a note can
-  also sit on top of the NoteSpin window.
-- Its card on the wheel catches up as you type. Switching notebooks closes it first, as it belongs to the
-  notebook that was open. A locked note moves between the windows without asking for its password again, and
-  locks again when it's closed.
+  also sit on top of the NoteSpin window. If a note is open over the wheel, it's saved and closed to make way.
+- Cards on the wheel catch up as you type. Switching notebooks closes every note window first (saving them),
+  as they belong to the notebook that was open. A locked note moves between windows without asking for its
+  password again, and locks again when it's closed.
 
 ## Categories
 
@@ -182,6 +186,25 @@ A `.notespin` file is an ordinary SQLite database, so any SQLite tool can open i
 files by a stamp inside them, whatever they're called, and checks a file before importing it. A notebook is
 always a single file (nothing beside it), so it can be copied while NoteSpin is closed.
 
+## Copying notes from Sticky Notes
+
+Notes from **Microsoft Sticky Notes** (the app that comes with Windows) can be copied into the open notebook:
+*Settings → Microsoft Sticky Notes → Import from Sticky Notes…*, or the same item in the notebook menu.
+
+- A list shows every Sticky Note with text in it, last edited first: its colour, first line, a little of the
+  rest, and when it was last edited. Tick the ones you want (**Select all** / **Select none**) and choose
+  **Copy**.
+- Each becomes a **new note** in NoteSpin, keeping the dates it had in Sticky Notes. **Sticky Notes isn't
+  changed**: NoteSpin copies its files to a temporary folder, reads the copy and deletes it, so it never opens
+  Sticky Notes' own files (and Sticky Notes can be running meanwhile).
+- **Only the text comes across**, one line per paragraph, the first line being the title. Pictures,
+  handwriting, window positions and formatting stay behind.
+- **Colours become categories.** Yellow, the colour Sticky Notes starts with, goes to General (yellow here
+  too); green, pink, blue, purple and the rest each get a category named after the colour (made if there isn't
+  one, used if there is). Rename or recolour them afterwards as you like.
+- **Running it again**: notes copied into this notebook before are marked *Copied before* and start unticked,
+  so nothing is doubled by accident (tick them to copy them again).
+
 ## Keyboard, mouse and touch
 
 | Keys | |
@@ -189,7 +212,7 @@ always a single file (nothing beside it), so it can be copied while NoteSpin is 
 | ↑ ↓ (or ← →, Page Up/Down) | Previous / next card |
 | Home / End | First / last card |
 | Enter or Space | Open the front card (or the category) |
-| Ctrl+N | New note (in the note window too) |
+| Ctrl+N | New note (in a note window: a new note in another window) |
 | Ctrl+F | Search |
 | Esc | Close the note · clear the search · back to the categories |
 | Backspace | Back to the categories |
@@ -205,7 +228,7 @@ always a single file (nothing beside it), so it can be copied while NoteSpin is 
 | Click (tap) the front card | Open it |
 | Click (tap) a card behind | Bring it to the front |
 | Drag a note's top strip out of the window | Give it a window of its own |
-| Drop the note window on the front card | Put the note back |
+| Drop a note window on the front card | Put the note back |
 | Drop a `.notespin` file on the window | Import it |
 
 ## Questions
@@ -257,28 +280,33 @@ NoteSpin is a small Windows Forms window around a WebView2 browser view. The pag
 the window. The page reaches the C# side through one object (`chrome.webview.hostObjects.ns`, wrapped as
 `window.NS` by `web\js\host.js`), which reads and writes the notebook files with SQLite.
 
-The note window is a second, borderless window with its own WebView2 (sharing the first one's browser) showing
-`web\note.html`: the same editor, on its own. It's made shortly after start-up and hidden, then reused, so it
-can appear in the middle of a drag. The two pages don't talk directly: each has its own host object, and the
-C# side passes notes and messages between them (`NoteWin…`, `ToMain` and `ToNote` in `HostApi`). A note
-moves as the editor's state (`exportState`/`openState` in `editor.js`), including the key of an unlocked
-note, so only one window ever has it open.
+Each note window is a borderless window with its own WebView2 (sharing the main window's browser) showing
+`web\note.html`: the same editor, on its own, with one note. One spare window is kept made and hidden, so a
+note can appear in the middle of a drag; when it's taken, the next spare is made, and a window whose note
+closes becomes the spare (or goes, if there's one already). The pages don't talk directly: each has its own
+host object, and the C# side passes notes and messages between them (`NoteWin…`, `ToMain` and `ToNote` in
+`HostApi`; `MainForm` keeps the list of windows). A note moves as the editor's state
+(`exportState`/`openState` in `editor.js`), including the key of an unlocked note, so only one window ever has
+it open.
 
-- **C#:** `src\MainForm.cs` (main window, Windows dialogs, the drop target for the note window),
-  `src\NoteWindow.cs` (the note window: resizing, moving, following a drag), `src\PageHost.cs` (the web view
+- **C#:** `src\MainForm.cs` (main window, Windows dialogs, the note windows and the drop target for them),
+  `src\NoteWindow.cs` (a note window: resizing, moving, following a drag, its place and pin),
+  `src\StickyNotes.cs` (reading a copy of Microsoft Sticky Notes' notes), `src\PageHost.cs` (the web view
   in each window: serving the page, what it may open), `src\Native.cs` (the few Windows calls needed),
   `src\HostApi.cs` (what the pages can call),
   `src\Library.cs` (the notebooks folder, switching, backups), `src\Notebook.cs` (one notebook file:
   schema, notes, categories, search), `src\Settings.cs` (this PC's settings), `src\FileAssoc.cs` (the optional
   double-click setting), `src\FolderPicker.cs` (the Windows folder picker), `src\Sqlite.cs`, `src\WebAssets.cs`.
 - **Pages:** `web\index.html` and `web\note.html`, `web\css\app.css`, and in `web\js`: `app.js` (panel,
-  views, search, notebooks, settings, sending notes to the note window), `notewin.js` (the note window's page),
+  views, search, notebooks, settings, sending notes to note windows, copying from Sticky Notes), `notewin.js`
+  (a note window's page),
   `icons.js` (the icons, for both pages), `spinner.js` (the 3D wheel: drum, cards, movement, input), `cardface.js` (drawing a
   card), `editor.js` (the note editor, list handling, locking prompts), `notes.js` (what a note is made of,
   category colours), `crypto.js` (locking), `ui.js` (dialogs, menus, messages), `host.js` (the bridge).
 - **A notebook file:** tables `notes` (title = first line, body = the note's HTML, or the encrypted text when
   locked; preview and search columns the page fills in), `categories` and `meta`; stamped with
-  `PRAGMA application_id` `0x4E53504E`. It uses a rollback journal (not WAL) and `secure_delete`.
+  `PRAGMA application_id` `0x4E53504E`. It uses a rollback journal (not WAL) and `secure_delete`. Notes copied
+  from Sticky Notes are noted in `meta` (`copied:sticky:<its id>`), for *Copied before*.
 - **Icon:** `favicon.ico`, drawn by `tools\make-icon.ps1`.
 
 ### Testing
@@ -290,8 +318,9 @@ Environment variables for testing:
 - `NOTESPIN_DEVTOOLS=1`: allow the browser developer tools (F12) and reload (F5).
 - `NOTESPIN_WEB=<the web folder>`: serve the page from disk instead of the exe, so a reload shows changes.
 - `NOTESPIN_WINDOW=x,y,width,height`: place the window exactly.
+- `NOTESPIN_STICKYNOTES=<folder>`: read Sticky Notes' notes from a `plum.sqlite` in this folder instead.
 
 `tools\run-test.ps1` starts a Debug build with these, a throwaway data folder (`tools\out`, not in Git) and
 the DevTools protocol on port 9333; `tools\cdp.mjs` (Node 22+) drives it: run JavaScript, click, type, take
-screenshots (`connect(port, timeout, 'note.html')` drives the note window). `tools\filedlg.ps1` fills in the Windows Open/Save/folder dialogs, `tools\crop.ps1` enlarges part
+screenshots (`connect(port, timeout, 'note.html', targetId)` drives a note window; `pages(port, 'note.html')` lists them). `tools\filedlg.ps1` fills in the Windows Open/Save/folder dialogs, `tools\crop.ps1` enlarges part
 of a screenshot, and `tools\screen.ps1` captures the window as it appears on screen.

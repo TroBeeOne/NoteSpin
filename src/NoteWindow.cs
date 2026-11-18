@@ -9,15 +9,19 @@ using Microsoft.Web.WebView2.Core;
 namespace NoteSpin
 {
     /// <summary>
-    /// A note in a window of its own, for keeping on the desktop: one note at a time, outside the main window.
-    /// The window is made once, hidden, and used again, so it appears at once (even in the middle of a drag).
+    /// A note in a window of its own, for keeping on the desktop. Each note window holds one note, and a note
+    /// is open in one place at a time (here, in another note window, or in the main window). Windows are made
+    /// ahead, hidden, so one appears at once (even in the middle of a drag); see MainForm.TakeWindow.
     /// It has no frame: the note's top strip moves it, the thin edge around the note resizes it. The page in it
     /// (web\note.html) runs the same editor as the main window. It isn't owned by the main window, so it stays
     /// on screen when that's minimized; closing the main window closes it too.
+    /// Each note remembers its own place, size and pin, so it comes back where it was.
     /// </summary>
     internal sealed class NoteWindow : Form
     {
-        const string PlaceKey = "app:noteWindow", PinKey = "app:noteTop";
+        // "app:noteWindow": where a note window was last (where a note goes the first time it's out);
+        // "app:noteWindow:<note id>" and "app:noteTop:<note id>": each note's own place and pin
+        const string LastPlaceKey = "app:noteWindow", PlaceKeyPrefix = "app:noteWindow:", PinKeyPrefix = "app:noteTop:";
         static readonly Color DefaultPaper = Color.FromArgb(0xFF, 0xF2, 0xA6), DefaultBand = Color.FromArgb(0xE9, 0xCF, 0x5C);
 
         readonly MainForm main;
@@ -29,26 +33,46 @@ namespace NoteSpin
         bool followMouse, following, movingByStrip, ready, allowClose, showQuietly;
         int followStarted;
 
+        /// <summary>Which window this is, for the main page ("w1", "w2", …).</summary>
+        public string WinId { get; }
+
+        /// <summary>Given a note (or about to be), so not free for another; false: hidden and waiting for one.</summary>
+        public bool InUse { get; set; }
+
+        /// <summary>The page is up, so a note can be sent to it.</summary>
+        public bool Started { get; private set; }
+
+        /// <summary>Free for the next note: made, hidden and not in use.</summary>
+        public bool IsFree => Started && !InUse && !Visible && !IsDisposed && !allowClose;
+
+        /// <summary>The note closed (or went back to the main window) and the window hid: it's free again.</summary>
+        public event Action<NoteWindow> Freed;
+
         /// <summary>A note is open in the window (or about to be: the page reports back once it's shown).</summary>
         public bool HasNote { get; private set; }
         public string NoteId { get; private set; }
         public bool NoteLocked { get; private set; }
 
-        public NoteWindow(MainForm main, Settings settings)
+        public NoteWindow(MainForm main, Settings settings, string winId)
         {
             this.main = main;
             this.settings = settings;
+            WinId = winId;
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.Manual;
             ShowInTaskbar = true;
             Text = "Note — NoteSpin";
             Icon = WebAssets.AppIcon() ?? Icon;
             BackColor = DefaultBand;
-            TopMost = settings.Get(PinKey) == "1";
             page = new PageHost(this, DefaultPaper);
             followTimer.Tick += (s, e) => Follow();
             FitToDpi();
         }
+
+        /// <summary>The note id in a note's state (see Open), or null for a new note.</summary>
+        public static string NoteIdOf(Dictionary<string, object> state) =>
+            state != null && state.TryGetValue("note", out object n) && n is Dictionary<string, object> nd &&
+            nd.TryGetValue("id", out object id) && id is string s && s.Length > 0 ? s : null;
 
         // a minimise box so a click on its taskbar button can minimise it; a system menu for Close there and Alt+Space
         protected override CreateParams CreateParams
@@ -67,6 +91,7 @@ namespace NoteSpin
         {
             var _ = Handle;   // the page needs a window to live in; it stays hidden until a note opens
             await page.Start(env, "note.html", api);
+            Started = true;
         }
 
         protected override void OnHandleCreated(EventArgs e)
@@ -91,6 +116,7 @@ namespace NoteSpin
         {
             base.OnDpiChanged(e);
             FitToDpi();
+            if (sizing != 0) { sizeStart = Bounds; sizeFrom = Cursor.Position; }   // resized onto another screen: go on from here
         }
 
         protected override void OnResize(EventArgs e)
@@ -105,49 +131,158 @@ namespace NoteSpin
             SavePlacement();
         }
 
-        // The page covers everything but the edge, so only the edge reaches here: it resizes the window
+        // The page covers everything but the edge, so only the edge reaches here: it resizes the window.
+        // Windows tells it which part of the edge the mouse is on (and shows the arrows for it), but the
+        // resizing is done here: Windows' own only works on windows with a sizing frame, which this hasn't.
         protected override void WndProc(ref Message m)
         {
-            if (m.Msg == Native.WM_NCHITTEST)
+            switch (m.Msg)
             {
-                base.WndProc(ref m);
-                if ((int)m.Result != Native.HTCLIENT) return;
-                long lp = m.LParam.ToInt64();
-                var p = PointToClient(new Point((short)(lp & 0xFFFF), (short)((lp >> 16) & 0xFFFF)));
-                int g = Grip, corner = g * 4, w = ClientSize.Width, h = ClientSize.Height;
-                bool left = p.X < g, right = p.X >= w - g, top = p.Y < g, bottom = p.Y >= h - g;
-                // the corners reach a little way along each edge, so they're easy to catch
-                if (top || bottom) { left |= p.X < corner; right |= p.X >= w - corner; }
-                if (left || right) { top |= p.Y < corner; bottom |= p.Y >= h - corner; }
-                int hit = top && left ? Native.HTTOPLEFT : top && right ? Native.HTTOPRIGHT : bottom && left ? Native.HTBOTTOMLEFT
-                    : bottom && right ? Native.HTBOTTOMRIGHT : left ? Native.HTLEFT : right ? Native.HTRIGHT : top ? Native.HTTOP
-                    : bottom ? Native.HTBOTTOM : Native.HTCLIENT;
-                m.Result = (IntPtr)hit;
-                return;
+                case Native.WM_NCHITTEST:
+                    base.WndProc(ref m);
+                    if ((int)m.Result == Native.HTCLIENT) m.Result = (IntPtr)EdgeAt(PointToClient(LParamPoint(m.LParam)));
+                    return;
+                case Native.WM_NCLBUTTONDOWN:
+                case Native.WM_NCLBUTTONDBLCLK:   // a quick second press starts a resize too (rather than Windows' double-click)
+                    int edge = (int)m.WParam;
+                    if (edge >= Native.HTLEFT && edge <= Native.HTBOTTOMRIGHT)
+                    {
+                        if (WindowState == FormWindowState.Normal) StartSizing(edge, LParamPoint(m.LParam));   // screen pixels
+                        return;
+                    }
+                    break;
+                case Native.WM_MOUSEMOVE:
+                    if (sizing != 0) { SizeTo(PointToScreen(LParamPoint(m.LParam))); return; }   // client pixels
+                    break;
+                case Native.WM_LBUTTONUP:
+                    if (sizing != 0) { EndSizing(); return; }
+                    break;
+                case Native.WM_CAPTURECHANGED:
+                    if (sizing != 0) EndSizing();   // something else took the mouse
+                    break;
             }
             base.WndProc(ref m);
         }
 
+        // the point in a mouse message (screen pixels for the edge, client pixels inside)
+        static Point LParamPoint(IntPtr lParam)
+        {
+            long lp = lParam.ToInt64();
+            return new Point((short)(lp & 0xFFFF), (short)((lp >> 16) & 0xFFFF));
+        }
+
+        /// <summary>Which part of the edge a point (client pixels) is on: HTLEFT … HTBOTTOMRIGHT, or HTCLIENT.</summary>
+        int EdgeAt(Point p)
+        {
+            int g = Grip, corner = g * 4, w = ClientSize.Width, h = ClientSize.Height;
+            bool left = p.X < g, right = p.X >= w - g, top = p.Y < g, bottom = p.Y >= h - g;
+            // the corners reach a little way along each edge, so they're easy to catch
+            if (top || bottom) { left |= p.X < corner; right |= p.X >= w - corner; }
+            if (left || right) { top |= p.Y < corner; bottom |= p.Y >= h - corner; }
+            return top && left ? Native.HTTOPLEFT : top && right ? Native.HTTOPRIGHT : bottom && left ? Native.HTBOTTOMLEFT
+                : bottom && right ? Native.HTBOTTOMRIGHT : left ? Native.HTLEFT : right ? Native.HTRIGHT : top ? Native.HTTOP
+                : bottom ? Native.HTBOTTOM : Native.HTCLIENT;
+        }
+
+        /* ---------- resizing from the edge ---------- */
+
+        int sizing;            // the part of the edge being dragged (HTLEFT … HTBOTTOMRIGHT), 0 when not resizing
+        Point sizeFrom;        // where the mouse was then (screen pixels)
+        Rectangle sizeStart;   // and the window
+
+        static bool OnLeft(int e) => e == Native.HTLEFT || e == Native.HTTOPLEFT || e == Native.HTBOTTOMLEFT;
+        static bool OnRight(int e) => e == Native.HTRIGHT || e == Native.HTTOPRIGHT || e == Native.HTBOTTOMRIGHT;
+        static bool OnTop(int e) => e == Native.HTTOP || e == Native.HTTOPLEFT || e == Native.HTTOPRIGHT;
+        static bool OnBottom(int e) => e == Native.HTBOTTOM || e == Native.HTBOTTOMLEFT || e == Native.HTBOTTOMRIGHT;
+
+        static Cursor SizeCursor(int e) =>
+            e == Native.HTLEFT || e == Native.HTRIGHT ? Cursors.SizeWE : e == Native.HTTOP || e == Native.HTBOTTOM ? Cursors.SizeNS
+            : e == Native.HTTOPLEFT || e == Native.HTBOTTOMRIGHT ? Cursors.SizeNWSE : Cursors.SizeNESW;
+
+        void StartSizing(int edge, Point screen)
+        {
+            sizing = edge;
+            sizeFrom = screen;
+            sizeStart = Bounds;
+            Capture = true;   // the mouse stays ours until it's let go, even off the window
+            Cursor.Current = SizeCursor(edge);
+        }
+
+        // The dragged sides follow the mouse; the others stay put. Never smaller than the smallest size.
+        void SizeTo(Point screen)
+        {
+            int dx = screen.X - sizeFrom.X, dy = screen.Y - sizeFrom.Y;
+            var r = sizeStart;
+            int left = r.Left, top = r.Top, right = r.Right, bottom = r.Bottom, minW = MinimumSize.Width, minH = MinimumSize.Height;
+            if (OnLeft(sizing)) left = Math.Min(r.Left + dx, right - minW);
+            if (OnRight(sizing)) right = Math.Max(r.Right + dx, left + minW);
+            if (OnTop(sizing)) top = Math.Min(r.Top + dy, bottom - minH);
+            if (OnBottom(sizing)) bottom = Math.Max(r.Bottom + dy, top + minH);
+            var to = Rectangle.FromLTRB(left, top, right, bottom);
+            if (to != Bounds) Bounds = to;
+            Cursor.Current = SizeCursor(sizing);
+        }
+
+        void EndSizing()
+        {
+            if (sizing == 0) return;
+            sizing = 0;
+            Capture = false;
+            SavePlacement();
+        }
+
         /* ---------- where it goes ---------- */
 
-        /// <summary>Where it was last, else beside the main window.</summary>
+        /// <summary>
+        /// Where the note was the last time it was out. A note that hasn't been out before goes a step down and to
+        /// the right of the note window shown last (so they don't stack up), else where a note window was last,
+        /// else beside the main window. It takes the size note windows had last.
+        /// </summary>
         Rectangle Placement()
         {
             var size = new Size((int)(360 * DpiScale), (int)(440 * DpiScale));
-            string[] p = (settings.Get(PlaceKey) ?? "").Split(',');
-            if (p.Length >= 4 && int.TryParse(p[0], out int x) && int.TryParse(p[1], out int y) &&
-                int.TryParse(p[2], out int w) && int.TryParse(p[3], out int h) && w >= MinimumSize.Width && h >= MinimumSize.Height)
+            bool hasLast = TryPlace(settings.Get(LastPlaceKey), out Rectangle last);
+            if (NoteId != null && TryPlace(settings.Get(PlaceKeyPrefix + NoteId), out Rectangle own))
             {
-                var r = new Rectangle(x, y, w, h);
-                if (OnScreen(r)) return r;
-                size = r.Size;
+                if (OnScreen(own)) return own;
+                size = own.Size;
             }
+            else if (hasLast) size = last.Size;
+            var other = main.LastShownNoteWindow(this);
+            if (other != null) return Cascade(other.Value.Location, size);
+            if (hasLast && OnScreen(new Rectangle(last.Location, size))) return new Rectangle(last.Location, size);
             var m = main.WindowState == FormWindowState.Normal ? main.Bounds : main.RestoreBounds;
             var wa = Screen.FromRectangle(m).WorkingArea;
             int nx = m.Right + 12;
             if (nx + size.Width > wa.Right) nx = Math.Max(wa.Left, m.Right - size.Width - 48);
             int ny = Math.Max(wa.Top, Math.Min(m.Top + 64, wa.Bottom - size.Height));
             return new Rectangle(nx, ny, size.Width, size.Height);
+        }
+
+        // A step down and to the right of from, clear of the other note windows; back to the top of the screen
+        // when it would run off the bottom or the right
+        Rectangle Cascade(Point from, Size size)
+        {
+            int step = (int)Math.Round(28 * DpiScale);
+            var wa = Screen.FromPoint(from).WorkingArea;
+            var p = new Point(from.X + step, from.Y + step);
+            for (int i = 0; i < 40; i++)
+            {
+                if (p.X + size.Width > wa.Right || p.Y + size.Height > wa.Bottom) p = new Point(wa.Left + step, wa.Top + step);
+                if (!main.NoteWindowNear(p, this)) break;
+                p.Offset(step, step);
+            }
+            return new Rectangle(p, size);
+        }
+
+        bool TryPlace(string saved, out Rectangle r)
+        {
+            r = Rectangle.Empty;
+            string[] p = (saved ?? "").Split(',');
+            if (p.Length < 4 || !int.TryParse(p[0], out int x) || !int.TryParse(p[1], out int y) ||
+                !int.TryParse(p[2], out int w) || !int.TryParse(p[3], out int h) || w < MinimumSize.Width || h < MinimumSize.Height) return false;
+            r = new Rectangle(x, y, w, h);
+            return true;
         }
 
         static bool OnScreen(Rectangle r) =>
@@ -157,13 +292,16 @@ namespace NoteSpin
         {
             if (!Visible || WindowState != FormWindowState.Normal) return;
             var r = Bounds;
-            settings.Set(PlaceKey, $"{r.X},{r.Y},{r.Width},{r.Height}");
+            string v = $"{r.X},{r.Y},{r.Width},{r.Height}";
+            settings.Set(LastPlaceKey, v);
+            if (NoteId != null) settings.Set(PlaceKeyPrefix + NoteId, v);
         }
 
+        /// <summary>Kept on top of other windows; each note remembers its own.</summary>
         public bool Pinned
         {
             get => TopMost;
-            set { TopMost = value; settings.Set(PinKey, value ? "1" : "0"); }
+            set { TopMost = value; if (NoteId != null) settings.Set(PinKeyPrefix + NoteId, value ? "1" : ""); }
         }
 
         /* ---------- showing a note ---------- */
@@ -171,10 +309,12 @@ namespace NoteSpin
         /// <summary>Opens a note in the page (state: what the editor needs, from the page that had it).</summary>
         public void Open(Dictionary<string, object> state)
         {
+            InUse = true;
             HasNote = true;
-            NoteId = state.TryGetValue("note", out object n) && n is Dictionary<string, object> nd && nd.TryGetValue("id", out object id) ? id as string : null;
+            NoteId = NoteIdOf(state);
             NoteLocked = state.TryGetValue("key", out object k) && k != null;
-            Send(new Dictionary<string, object> { ["type"] = "open", ["state"] = state });
+            TopMost = NoteId != null && settings.Get(PinKeyPrefix + NoteId) == "1";
+            Send(new Dictionary<string, object> { ["type"] = "open", ["state"] = state, ["pinned"] = TopMost });
         }
 
         /// <summary>Shows the window where it was last; activate: take the focus (not when NoteSpin starts with it).</summary>
@@ -190,6 +330,7 @@ namespace NoteSpin
             if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
             if (activate) Activate();
             else Native.BringToFrontQuietly(Handle);
+            main.NoteWindowShown(this);
         }
 
         /// <summary>
@@ -212,6 +353,7 @@ namespace NoteSpin
                 showQuietly = false;
             }
             Native.BringToFrontQuietly(Handle);
+            main.NoteWindowShown(this);
             followOffset = new Point(gx, gy);
             followMouse = mouse;
             following = true;
@@ -227,7 +369,7 @@ namespace NoteSpin
             var c = Cursor.Position;
             var to = new Point(c.X - followOffset.X, c.Y - followOffset.Y);
             if (to != Location) Location = to;
-            main.DockHover(c);
+            main.DockHover(this, c);
         }
 
         /// <summary>The drag that brought the note out has ended (the page saw the pointer come up).</summary>
@@ -259,14 +401,14 @@ namespace NoteSpin
         // Dropped on the main window's cards: the note goes back in there
         async Task FinishMove()
         {
-            if (HasNote && await main.DockDrop(Cursor.Position)) Send(new Dictionary<string, object> { ["type"] = "dock" });
+            if (HasNote && await main.DockDrop(this, Cursor.Position)) Send(new Dictionary<string, object> { ["type"] = "dock" });
         }
 
         protected override void OnMove(EventArgs e)
         {
             base.OnMove(e);
             page?.Moved();
-            if (movingByStrip) main.DockHover(Cursor.Position);
+            if (movingByStrip) main.DockHover(this, Cursor.Position);
         }
 
         protected override void OnActivated(EventArgs e)
@@ -284,7 +426,9 @@ namespace NoteSpin
             HasNote = false;
             NoteId = null;
             NoteLocked = false;
+            TopMost = false;
             if (Visible) Hide();
+            if (InUse) { InUse = false; Freed?.Invoke(this); }
         }
 
         /* ---------- the page ---------- */
@@ -305,8 +449,11 @@ namespace NoteSpin
         /// <summary>What the page reports about the note it shows: for the taskbar, the colour of the edge, and the main window.</summary>
         public void SetState(Dictionary<string, object> s)
         {
+            string before = NoteId;
             HasNote = s.TryGetValue("open", out object o) && o is bool b && b;
-            NoteId = HasNote && s.TryGetValue("id", out object id) ? id as string : null;
+            NoteId = HasNote && s.TryGetValue("id", out object id) && id is string sid && sid.Length > 0 ? sid : null;
+            // a new note gets its id when it's first saved: its place and pin are kept under it from then on
+            if (before == null && NoteId != null) { SavePlacement(); if (TopMost) settings.Set(PinKeyPrefix + NoteId, "1"); }
             NoteLocked = HasNote && s.TryGetValue("locked", out object l) && l is bool lb && lb;
             string title = s.TryGetValue("title", out object t) ? (t as string ?? "").Trim() : "";
             if (title.Length > 80) title = title.Substring(0, 80) + "…";
@@ -328,7 +475,7 @@ namespace NoteSpin
         /* ---------- closing ---------- */
 
         // Closed from the taskbar, Alt+F4 or anything else but NoteSpin itself: the page closes the note
-        // (saving it) and the window hides, ready for the next note
+        // (saving it) and the window hides, free for another note (MainForm keeps one free window spare)
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             if (!allowClose && e.CloseReason != CloseReason.WindowsShutDown)
@@ -338,15 +485,9 @@ namespace NoteSpin
                 else HideNote();
                 return;
             }
-            if (e.CloseReason == CloseReason.WindowsShutDown) Remember();
+            // Windows is shutting down and may close this before the main window: the notes that are out are noted now
+            if (e.CloseReason == CloseReason.WindowsShutDown) main.RememberOpenNotes();
             base.OnFormClosing(e);
-        }
-
-        /// <summary>NoteSpin is closing: the note open here (unless it's locked) opens here again next time.</summary>
-        public void Remember()
-        {
-            try { settings.Set("app:noteOpen", HasNote && !NoteLocked && !string.IsNullOrEmpty(NoteId) ? NoteId : ""); }
-            catch { }
         }
 
         /// <summary>NoteSpin is closing.</summary>

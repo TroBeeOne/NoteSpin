@@ -171,17 +171,8 @@ namespace NoteSpin
             var res = new Dictionary<string, object>();
             db.Transaction(() =>
             {
-                string catId = GeneralId;
-                if (catName.Length > 0)
-                {
-                    catId = db.Scalar("SELECT id FROM categories WHERE name=?", catName) as string;
-                    if (catId == null)
-                    {
-                        catId = NewId();
-                        db.Exec("INSERT INTO categories(id,name,color,created) VALUES(?,?,?,?)", catId, Clip(catName, 60), ValidColor(catColor), Now());
-                        res["newCategory"] = catId;
-                    }
-                }
+                string catId = CategoryFor(catName, catColor, out bool made);
+                if (made) res["newCategory"] = catId;
                 long now = Now();
                 var old = string.IsNullOrEmpty(id) ? null : db.Query("SELECT category_id, title, body, locked, created, updated FROM notes WHERE id=?", id);
                 if (old == null || old.Count == 0)
@@ -208,7 +199,60 @@ namespace NoteSpin
             return res;
         }
 
+        // The category with this name (blank: General), made with the colour given if there isn't one yet
+        string CategoryFor(string name, string color, out bool made)
+        {
+            made = false;
+            name = (name ?? "").Trim();
+            if (name.Length == 0) return GeneralId;
+            if (db.Scalar("SELECT id FROM categories WHERE name=?", Clip(name, 60)) is string id) return id;
+            id = NewId();
+            db.Exec("INSERT INTO categories(id,name,color,created) VALUES(?,?,?,?)", id, Clip(name, 60), ValidColor(color), Now());
+            made = true;
+            return id;
+        }
+
         public void DeleteNote(string id) => db.Exec("DELETE FROM notes WHERE id=?", id);
+
+        /* ---------- notes copied in from elsewhere (Microsoft Sticky Notes) ---------- */
+
+        /// <summary>
+        /// Adds notes copied from another app, keeping the dates they had there. Each is prepared by the page
+        /// like a note it saves (title, body, preview, search, category, categoryColor), plus created and updated
+        /// (ms since 1970) and source: where it came from ("sticky:" + its id there), remembered so the page can
+        /// say it's been copied before. Returns how many were added.
+        /// </summary>
+        public int AddCopiedNotes(IEnumerable<Dictionary<string, object>> notes)
+        {
+            int count = 0;
+            db.Transaction(() =>
+            {
+                foreach (var n in notes)
+                {
+                    long now = Now();
+                    long created = Long(n, "created", now), updated = Long(n, "updated", created);
+                    if (created <= 0 || created > now) created = now;
+                    if (updated < created || updated > now) updated = created;
+                    string title = Str(n, "title") ?? "";
+                    string catId = CategoryFor(Str(n, "category"), Str(n, "categoryColor"), out _);
+                    db.Exec("INSERT INTO notes(id,category_id,title,body,preview,search,locked,created,updated) VALUES(?,?,?,?,?,?,?,?,?)",
+                        NewId(), catId, Clip(title, 500), Str(n, "body") ?? "", Str(n, "preview") ?? "", Str(n, "search") ?? "", false, created, updated);
+                    string source = Str(n, "source");
+                    if (!string.IsNullOrEmpty(source))
+                        db.Exec("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)", "copied:" + Clip(source, 200), now.ToString());
+                    count++;
+                }
+            });
+            return count;
+        }
+
+        /// <summary>The sources (see AddCopiedNotes) starting with prefix that notes were copied from before.</summary>
+        public HashSet<string> CopiedSources(string prefix)
+        {
+            string key = "copied:" + prefix;
+            return new HashSet<string>(db.Query("SELECT key FROM meta WHERE substr(key,1,?)=?", key.Length, key)
+                .Select(r => ((string)r[0]).Substring("copied:".Length)));
+        }
 
         /* ---------- categories ---------- */
 
@@ -277,6 +321,12 @@ namespace NoteSpin
         /* ---------- helpers ---------- */
 
         static string Str(Dictionary<string, object> d, string key) => d.TryGetValue(key, out object v) ? v as string : null;
+
+        static long Long(Dictionary<string, object> d, string key, long fallback)
+        {
+            try { return d.TryGetValue(key, out object v) && v != null ? Convert.ToInt64(v) : fallback; }
+            catch { return fallback; }
+        }
 
         static string Clip(string s, int max) => s.Length > max ? s.Substring(0, max) : s;
 

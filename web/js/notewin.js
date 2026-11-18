@@ -1,7 +1,7 @@
-// The note window's page: one note, outside the main window (the window itself is src\NoteWindow.cs).
-// The main window sends notes here (opened in their own window, popped out, or dragged out); this page edits
-// them with the same editor, tells the main window when they change, and can send them back to it.
-// Only one note is open at a time, in either window, so the two never edit the same note.
+// A note window's page: one note, outside the main window (the window itself is src\NoteWindow.cs).
+// The main window sends a note here (opened in its own window, popped out, or dragged out); this page edits
+// it with the same editor, tells the main window when it changes, and can send it back there.
+// Each note window has its own note, and a note is open in one place at a time, so no two pages edit the same note.
 
 import {Editor} from './editor.js';
 import {GENERAL_ID} from './notes.js';
@@ -62,11 +62,16 @@ const app = {
   popIn: () => queue(popIn),
 };
 
-/** Opens a note sent from the main window; the note that was here closes first (saved, or deleted if it's empty). */
-async function openState(st) {
+/**
+ * Opens a note sent from the main window (pinned: it's kept on top). A window is given a note only when it's
+ * free, but should one still be open here it closes first (saved, or deleted if it's empty).
+ */
+async function openState(st, on) {
   cancelDialogs();
   while (editor.closing) await new Promise(r => setTimeout(r, 30));
   if (editor.isOpen) await editor.close({keepWindow: true});
+  pinned = !!on;
+  editor.setPinned(pinned);
   await loadCats();
   await editor.openState(st);
   report();
@@ -108,17 +113,16 @@ async function refreshCategories() {
 function start() {
   if (!window.NS) return;
   editor = new Editor(app, {windowed: true});
-  NS.on('open', m => queue(() => openState(m.state)));
+  NS.on('open', m => queue(() => openState(m.state, m.pinned)));
   NS.on('close', m => queue(async () => { await closeNote(); if (m.id) toMain({id: m.id}); }));
   NS.on('dock', () => queue(popIn));
   NS.on('categoriesChanged', () => queue(refreshCategories));
-  // Ctrl+N: a new note here (the one that's open closes)
+  // Ctrl+N: a new note, in a window of its own (this one stays)
   document.addEventListener('keydown', e => {
     if (dialogOpen() || !e.ctrlKey || e.altKey || e.key.toLowerCase() !== 'n') return;
     e.preventDefault();
-    queue(() => openState({note: null, categoryId: GENERAL_ID, html: ''}));
+    NS.call('NoteWinNew', JSON.stringify({note: null, categoryId: GENERAL_ID, html: ''})).catch(() => {});
   });
-  NS.call('NoteWinPinned').then(on => { pinned = !!on; editor.setPinned(pinned); }).catch(() => {});
   window.__nsBusy = () => editor.busy();
   window.__nsNote = {editor, state, app};   // for testing
   NS.call('NoteWinReady');

@@ -4,14 +4,19 @@
 
 import {writeFileSync} from 'node:fs';
 
-// page: 'index.html' (the main window) or 'note.html' (the note window)
-export async function connect(port = 9333, timeoutMs = 20000, page = 'index.html') {
+/** The pages open on the port showing page ('index.html' or 'note.html'): [{id, url, title, ...}]. */
+export async function pages(port = 9333, page = 'note.html') {
+  const list = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
+  return list.filter(t => t.type === 'page' && t.url.startsWith('https://notespin.local/' + page));
+}
+
+// page: 'index.html' (the main window) or 'note.html' (a note window: the first found, or the one with targetId)
+export async function connect(port = 9333, timeoutMs = 20000, page = 'index.html', targetId = null) {
   const t0 = Date.now();
   let target;
   while (!target) {
     try {
-      const list = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
-      target = list.find(t => t.type === 'page' && t.url.startsWith('https://notespin.local/' + page));
+      target = (await pages(port, page)).find(t => !targetId || t.id === targetId);
     } catch { /* not up yet */ }
     if (!target) {
       if (Date.now() - t0 > timeoutMs) throw new Error('NoteSpin page not found on port ' + port);

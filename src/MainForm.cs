@@ -12,7 +12,7 @@ namespace NoteSpin
 {
     /// <summary>
     /// The app window: the page compiled into the exe (web\index.html) in a WebView2. It also looks after the
-    /// note window, where a note can be kept outside it (see NoteWindow).
+    /// note windows, where notes can be kept outside it (see NoteWindow).
     /// </summary>
     internal sealed class MainForm : Form
     {
@@ -23,9 +23,12 @@ namespace NoteSpin
         readonly PageHost page;
         string startupFile;
         CoreWebView2Environment env;
-        NoteWindow notes;
-        Task<NoteWindow> notesReady;
-        bool closeConfirmed, closing, dockShown;
+        readonly List<NoteWindow> windows = new List<NoteWindow>();   // note windows: open ones, and the spare
+        readonly HashSet<string> opening = new HashSet<string>();     // notes on their way to a window
+        Task<NoteWindow> making;   // the next spare note window, being made
+        NoteWindow lastShown;
+        int windowCount;
+        bool closeConfirmed, closing, dockShown, notesRemembered;
         int dockSent;
 
         public string DataDir { get; }
@@ -83,33 +86,151 @@ namespace NoteSpin
             }
         }
 
-        // The note window is made a moment after the cards are up, so it's ready when a note is dragged out
+        // The first note window is made a moment after the cards are up, so it's ready when a note is dragged out
         async void OnFirstPageLoaded(object sender, CoreWebView2NavigationCompletedEventArgs e)
         {
             page.Core.NavigationCompleted -= OnFirstPageLoaded;
             await Task.Delay(1500);
-            try { await Notes(); } catch { /* tried again when a note is opened in it */ }
+            KeepSpare();
         }
 
-        /// <summary>The note window, made on first use.</summary>
-        internal Task<NoteWindow> Notes()
-        {
-            if (notesReady == null || notesReady.IsFaulted) notesReady = MakeNotes();
-            return notesReady;
-        }
+        /* ---------- note windows ----------
+           Each note that's out has a window of its own. One more is kept made and hidden, so the next note
+           (dragged out, say) has one at once; while another is being made, a note waits for it. A window whose
+           note closes hides and becomes the spare, or goes if there's a spare already. */
 
-        async Task<NoteWindow> MakeNotes()
+        /// <summary>A window for a note: the spare if there is one, else a new one. It's in use from now on.</summary>
+        internal async Task<NoteWindow> TakeWindow()
         {
-            if (env == null) throw new InvalidOperationException("NoteSpin is still starting.");
-            var w = notes ?? new NoteWindow(this, settings);
-            notes = w;
-            w.FormClosed += (s, e) => { if (notes == w) { notes = null; notesReady = null; } };
-            await w.Start(env, new HostApi(this, settings, lib, w));
+            if (closing || closeConfirmed) throw new InvalidOperationException("NoteSpin is closing.");
+            NoteWindow w = windows.FirstOrDefault(x => x.IsFree);
+            if (w != null) w.InUse = true;
+            else
+            {
+                var t = making ?? MakeWindow();
+                making = null;   // this one's taken: KeepSpare makes another
+                w = await t;
+            }
+            SpareSoon();
             return w;
         }
 
-        /// <summary>The note window if it's been made (else null).</summary>
-        internal NoteWindow NoteWin => notes;
+        // A new note window, in use (KeepSpare frees it if nothing took it while it was made)
+        async Task<NoteWindow> MakeWindow()
+        {
+            if (env == null) throw new InvalidOperationException("NoteSpin is still starting.");
+            var w = new NoteWindow(this, settings, "w" + (++windowCount)) { InUse = true };
+            windows.Add(w);
+            w.FormClosed += (s, e) => { windows.Remove(w); if (lastShown == w) lastShown = null; };
+            w.Freed += OnWindowFreed;
+            try { await w.Start(env, new HostApi(this, settings, lib, w)); }
+            catch
+            {
+                windows.Remove(w);
+                try { w.CloseForGood(); } catch { }
+                throw;
+            }
+            return w;
+        }
+
+        // Makes the spare window, unless there is one (or one's on its way)
+        async void KeepSpare()
+        {
+            if (making != null || closing || closeConfirmed || env == null || windows.Any(x => x.IsFree)) return;
+            var t = making = MakeWindow();
+            NoteWindow w;
+            try { w = await t; }
+            catch { if (making == t) making = null; return; }   // tried again when a note needs a window
+            if (making == t) { making = null; w.InUse = false; }
+        }
+
+        // the next spare is made a little after a window is taken, so it doesn't slow that one down
+        void SpareSoon() => Later(async () => { await Task.Delay(1200); KeepSpare(); });
+
+        // A note closed and its window hid: one free window stays as the spare, the others go
+        void OnWindowFreed(NoteWindow w) => Later(async () =>
+        {
+            await Task.Delay(3000);
+            foreach (var extra in windows.Where(x => x.IsFree).Skip(1).ToList()) extra.CloseForGood();
+        });
+
+        /// <summary>The windows with a note in them.</summary>
+        internal IEnumerable<NoteWindow> OpenNoteWindows => windows.Where(w => w.HasNote && !w.IsDisposed).ToList();
+
+        /// <summary>The window a note is out in (null when it isn't out).</summary>
+        internal NoteWindow WindowFor(string noteId) =>
+            string.IsNullOrEmpty(noteId) ? null : windows.FirstOrDefault(w => w.HasNote && !w.IsDisposed && w.NoteId == noteId);
+
+        internal NoteWindow WindowById(string winId) => windows.FirstOrDefault(w => w.WinId == winId && !w.IsDisposed);
+
+        /// <summary>A message for the note pages (all of them but except).</summary>
+        internal void SendToNotes(object message, NoteWindow except = null)
+        {
+            foreach (var w in windows.ToList()) if (w != except && !w.IsDisposed) w.Send(message);
+        }
+
+        /// <summary>
+        /// Opens a note in a window of its own (state: what the editor needs). A note that's out already just
+        /// comes to the front. activate: the window takes the focus (not when NoteSpin starts with it).
+        /// </summary>
+        internal async Task OpenInWindow(Dictionary<string, object> state, bool activate)
+        {
+            string id = NoteWindow.NoteIdOf(state);
+            var there = WindowFor(id);
+            if (there != null) { there.ShowNote(true); return; }
+            if (id != null && !opening.Add(id)) return;   // on its way already (a double click)
+            try
+            {
+                var w = await TakeWindow();
+                w.Open(state);
+                w.ShowNote(activate);
+            }
+            finally { if (id != null) opening.Remove(id); }
+        }
+
+        /// <summary>
+        /// The note open in this window moves to a window of its own. drag: it's being dragged out, held at
+        /// (grabX, grabY) CSS pixels from its top-left corner, so the window follows the mouse until it's let go.
+        /// </summary>
+        internal async Task PopOut(Dictionary<string, object> state, bool drag, double grabX, double grabY, bool mouse)
+        {
+            double scale = page.Scale;
+            var w = await TakeWindow();
+            w.Open(state);
+            if (drag) w.ShowFollowing(grabX, grabY, scale, mouse);
+            else w.ShowNote(true);
+        }
+
+        internal void NoteWindowShown(NoteWindow w) => lastShown = w;
+
+        /// <summary>Where the note window shown last is (not counting except), for placing the next one beside it.</summary>
+        internal Rectangle? LastShownNoteWindow(NoteWindow except)
+        {
+            bool onScreen(NoteWindow x) => x != null && x != except && !x.IsDisposed && x.Visible && x.WindowState == FormWindowState.Normal;
+            var w = onScreen(lastShown) ? lastShown : windows.LastOrDefault(onScreen);
+            return w?.Bounds;
+        }
+
+        /// <summary>Whether another note window has its top-left corner at (or within a few pixels of) p.</summary>
+        internal bool NoteWindowNear(Point p, NoteWindow except) =>
+            windows.Any(w => w != except && !w.IsDisposed && w.Visible && Math.Abs(w.Left - p.X) <= 4 && Math.Abs(w.Top - p.Y) <= 4);
+
+        /// <summary>
+        /// NoteSpin is closing: the notes that are out (but not locked ones, whose password isn't kept) open in
+        /// their windows again next time. Only the first call counts, so windows closing one by one change nothing.
+        /// </summary>
+        internal void RememberOpenNotes()
+        {
+            if (notesRemembered) return;
+            notesRemembered = true;
+            try
+            {
+                var ids = windows.Where(w => w.HasNote && !w.NoteLocked && !string.IsNullOrEmpty(w.NoteId) && !w.IsDisposed)
+                    .Select(w => w.NoteId).Distinct();
+                settings.Set("app:noteOpen", string.Join(",", ids));
+            }
+            catch { }
+        }
 
         /* ---------- messages to and from the page ---------- */
 
@@ -160,15 +281,15 @@ namespace NoteSpin
         /// <summary>The main page's pixels per CSS pixel.</summary>
         internal double PageScale => page.Scale;
 
-        /* ---------- putting a note back: the note window dropped on the cards ---------- */
+        /* ---------- putting a note back: a note window dropped on the cards ---------- */
 
         /// <summary>
-        /// The note window is being moved with the mouse at p (on screen). Over this window (and with nothing
+        /// A note window is being moved with the mouse at p (on screen). Over this window (and with nothing
         /// else in between), the page shows where to drop it.
         /// </summary>
-        internal void DockHover(Point p)
+        internal void DockHover(NoteWindow w, Point p)
         {
-            var at = DockPoint(p);
+            var at = DockPoint(w, p);
             if (at == null)
             {
                 if (dockShown) { dockShown = false; _ = page.Eval("window.__nsDockHover && __nsDockHover(null)"); }
@@ -181,26 +302,26 @@ namespace NoteSpin
             _ = page.Eval($"window.__nsDockHover && __nsDockHover({at.Value.X},{at.Value.Y})");
         }
 
-        /// <summary>The note window was let go with the mouse at p: true when the page takes the note back.</summary>
-        internal async Task<bool> DockDrop(Point p)
+        /// <summary>A note window was let go with the mouse at p: true when the page takes the note back.</summary>
+        internal async Task<bool> DockDrop(NoteWindow w, Point p)
         {
-            var at = DockPoint(p);
+            var at = DockPoint(w, p);
             dockShown = false;
             if (at == null) { await page.Eval("window.__nsDockHover && __nsDockHover(null)"); return false; }
             return await page.Eval($"!!(window.__nsDockDrop && __nsDockDrop({at.Value.X},{at.Value.Y}))") == "true";
         }
 
-        // p in the page's CSS pixels, or null when the mouse isn't over this window's page
-        Point? DockPoint(Point p)
+        // p in the page's CSS pixels, or null when the mouse isn't over this window's page (just under note window w)
+        Point? DockPoint(NoteWindow w, Point p)
         {
-            if (!Visible || WindowState == FormWindowState.Minimized || page.Core == null || notes == null) return null;
+            if (!Visible || WindowState == FormWindowState.Minimized || page.Core == null || w == null || w.IsDisposed) return null;
             var c = PointToClient(p);
-            if (!ClientRectangle.Contains(c) || !Native.IsWindowBelowAt(notes.Handle, Handle, p)) return null;
+            if (!ClientRectangle.Contains(c) || !Native.IsWindowBelowAt(w.Handle, Handle, p)) return null;
             double s = page.Scale;
             return new Point((int)Math.Round(c.X / s), (int)Math.Round(c.Y / s));
         }
 
-        /// <summary>The note in the note window comes back to this window (state: what the editor needs).</summary>
+        /// <summary>A note from a note window comes back to this window (state: what the editor needs).</summary>
         internal void DockIn(object state)
         {
             if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
@@ -306,14 +427,15 @@ namespace NoteSpin
         }
 
         // Notes save as you type; before closing, each page gets up to 5 s to write the last change.
-        // A note left open in the note window opens there again next time (unless it's locked).
+        // Notes left open in note windows open there again next time (unless they're locked).
         protected override async void OnFormClosing(FormClosingEventArgs e)
         {
             if (closeConfirmed || page.Core == null || e.CloseReason == CloseReason.WindowsShutDown)
             {
-                RememberNoteWindow();
+                closeConfirmed = true;
+                RememberOpenNotes();
                 SavePlacement();
-                notes?.CloseForGood();
+                foreach (var w in windows.ToList()) w.CloseForGood();
                 base.OnFormClosing(e);
                 return;
             }
@@ -322,16 +444,12 @@ namespace NoteSpin
             closing = true;
             try
             {
-                await page.WaitWhileBusy();
-                if (notes != null) await notes.WaitWhileBusy();
+                await Task.WhenAll(new[] { page.WaitWhileBusy() }.Concat(windows.ToList().Select(w => w.WaitWhileBusy())));
             }
             catch { /* a page isn't answering: close anyway */ }
             closeConfirmed = true;
             Close();
         }
-
-        // (if Windows closed the note window first, it remembered for itself)
-        void RememberNoteWindow() => notes?.Remember();
 
         protected override void OnFormClosed(FormClosedEventArgs e)
         {

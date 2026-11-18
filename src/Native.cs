@@ -8,7 +8,8 @@ namespace NoteSpin
     /// <summary>The few Windows calls the note window needs that Windows Forms doesn't offer.</summary>
     internal static class Native
     {
-        public const int WM_NCHITTEST = 0x0084, WM_NCLBUTTONDOWN = 0x00A1;
+        public const int WM_NCHITTEST = 0x0084, WM_NCLBUTTONDOWN = 0x00A1, WM_NCLBUTTONDBLCLK = 0x00A3,
+            WM_MOUSEMOVE = 0x0200, WM_LBUTTONUP = 0x0202, WM_CAPTURECHANGED = 0x0215;
         public const int HTCLIENT = 1, HTCAPTION = 2, HTLEFT = 10, HTRIGHT = 11, HTTOP = 12, HTTOPLEFT = 13, HTTOPRIGHT = 14,
             HTBOTTOM = 15, HTBOTTOMLEFT = 16, HTBOTTOMRIGHT = 17;
         public const int WS_SYSMENU = 0x00080000, WS_MINIMIZEBOX = 0x00020000;
