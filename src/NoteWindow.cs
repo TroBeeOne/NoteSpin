@@ -132,8 +132,8 @@ namespace NoteSpin
         }
 
         // The page covers everything but the edge, so only the edge reaches here: it resizes the window.
-        // Windows tells it which part of the edge the mouse is on (and shows the arrows for it), but the
-        // resizing is done here: Windows' own only works on windows with a sizing frame, which this hasn't.
+        // Windows is told which part of the edge the mouse is on, but the arrows and the resizing are done
+        // here: Windows' own only work on windows with a sizing frame, which this hasn't.
         protected override void WndProc(ref Message m)
         {
             switch (m.Msg)
@@ -142,6 +142,15 @@ namespace NoteSpin
                     base.WndProc(ref m);
                     if ((int)m.Result == Native.HTCLIENT) m.Result = (IntPtr)EdgeAt(PointToClient(LParamPoint(m.LParam)));
                     return;
+                case Native.WM_SETCURSOR:   // the mouse is over the window: the arrows on the edge, before it's pressed
+                    int over = (short)(m.LParam.ToInt64() & 0xFFFF);
+                    if (sizing == 0 && over >= Native.HTLEFT && over <= Native.HTBOTTOMRIGHT && WindowState == FormWindowState.Normal)
+                    {
+                        Cursor.Current = SizeCursor(over);
+                        m.Result = (IntPtr)1;
+                        return;
+                    }
+                    break;
                 case Native.WM_NCLBUTTONDOWN:
                 case Native.WM_NCLBUTTONDBLCLK:   // a quick second press starts a resize too (rather than Windows' double-click)
                     int edge = (int)m.WParam;

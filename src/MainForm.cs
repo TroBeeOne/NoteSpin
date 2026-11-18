@@ -408,6 +408,27 @@ namespace NoteSpin
 
         /* ---------- window ---------- */
 
+        bool seeThrough;
+
+        /// <summary>
+        /// The see-through background (Settings): the desktop shows through wherever the page is transparent,
+        /// the space around the cards. The page sets how much of its dark background stays there.
+        /// </summary>
+        internal bool SetSeeThrough(bool on)
+        {
+            seeThrough = on && Native.SeeThrough(Handle, true);
+            if (!seeThrough) Native.SeeThrough(Handle, false);
+            if (page.Controller != null) page.Controller.DefaultBackgroundColor = seeThrough ? Color.Transparent : Bg;
+            Invalidate();
+            return seeThrough;
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            if (seeThrough) Native.SeeThrough(Handle, true);   // a new handle starts solid
+        }
+
         protected override void OnResize(EventArgs e)
         {
             base.OnResize(e);

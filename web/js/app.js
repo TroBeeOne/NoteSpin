@@ -249,6 +249,27 @@ function setSound(on) {
   NS.prefSet('sound', on ? '1' : '0');
 }
 
+/* ---------- see-through background (Settings) ---------- */
+
+// how much of the dark background stays over the desktop, in %
+const SEE_LEVEL = {min: 10, max: 95, start: 80};
+const seeThroughOn = () => NS.prefGet('seeThrough') === '1';
+function seeThroughLevel() {
+  const v = parseInt(NS.prefGet('seeThroughLevel'), 10);
+  return Number.isFinite(v) ? Math.min(SEE_LEVEL.max, Math.max(SEE_LEVEL.min, v)) : SEE_LEVEL.start;
+}
+
+// The space around the cards: see-through (what's behind the window shows under `level` % of the dark
+// background) or solid. Windows goes see-through before the page does, and solid after it, so the page
+// is never transparent over nothing. Whether it's see-through now.
+async function setSeeThrough(on, level = seeThroughLevel()) {
+  const ok = on && await NS.call('SeeThroughSet', true).catch(() => false) === true;
+  document.body.classList.toggle('see-through', ok);
+  spinner.setBackground(ok ? level / 100 : 1);
+  if (!ok) await NS.call('SeeThroughSet', false).catch(() => {});
+  return ok;
+}
+
 /* ---------- search ---------- */
 
 async function runSearch({rebuildAfter = true} = {}) {
@@ -844,6 +865,13 @@ async function showSettings() {
       <p class="hint">Otherwise a note opens over the cards. To give it a window of its own, drag it out of NoteSpin by its
       top strip, or click <svg class="inline-icon"><use href="#i-popout"/></svg>. Any number of notes can be out at once,
       each in its own window.</p>
+      <h3>Background</h3>
+      <label class="check"><input type="checkbox" id="seeThrough"${seeThroughOn() ? ' checked' : ''}> See-through background around the cards</label>
+      <div class="range-row${seeThroughOn() ? '' : ' off'}" id="seeRow"><span>Opacity</span>
+        <input type="range" id="seeLevel" min="${SEE_LEVEL.min}" max="${SEE_LEVEL.max}" step="5" value="${seeThroughLevel()}"${seeThroughOn() ? '' : ' disabled'} aria-label="Opacity of the background">
+        <output id="seeLevelText">${seeThroughLevel()}%</output></div>
+      <p class="hint">The desktop, and any window behind NoteSpin, shows through the space around the cards. The higher
+      the opacity, the darker and more solid that space is. The panel, the cards and open notes stay solid.</p>
       <h3>Microsoft Sticky Notes</h3>
       <p class="hint">Copy notes from the Sticky Notes app into this notebook, picking which ones. Sticky Notes isn't changed.</p>
       <div class="row-btns" style="margin-bottom:4px"><button class="btn" type="button" id="stickyBtn">Import from Sticky Notes…</button></div>
@@ -875,6 +903,23 @@ async function showSettings() {
       });
       box.querySelector('#ownWindow').addEventListener('change', e => NS.prefSet('noteWindow', e.target.checked ? '1' : '0'));
       box.querySelector('#stickyBtn').addEventListener('click', importStickyNotes);
+      const seeBox = box.querySelector('#seeThrough'), seeLevel = box.querySelector('#seeLevel'), seeRow = box.querySelector('#seeRow');
+      seeBox.addEventListener('change', async () => {
+        const ok = await setSeeThrough(seeBox.checked, +seeLevel.value);
+        if (seeBox.checked && !ok) { seeBox.checked = false; toast("Windows didn't let the window go see-through."); }
+        NS.prefSet('seeThrough', ok ? '1' : '0');
+        seeLevel.disabled = !ok;
+        seeRow.classList.toggle('off', !ok);
+      });
+      seeLevel.addEventListener('input', () => {
+        box.querySelector('#seeLevelText').textContent = seeLevel.value + '%';
+        if (seeBox.checked) spinner.setBackground(+seeLevel.value / 100);
+      });
+      seeLevel.addEventListener('change', () => NS.prefSet('seeThroughLevel', seeLevel.value));
+      // while the slider is held, the dialog's shade lifts, so the background shows as it will be
+      const back = box.closest('.dlg-back'), peek = on => back?.classList.toggle('peek', on);
+      seeLevel.addEventListener('pointerdown', () => peek(true));
+      for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) seeLevel.addEventListener(ev, () => peek(false));
       box.querySelectorAll('[data-folder]').forEach(b => b.addEventListener('click', () => NS.call('ShowFolder', b.dataset.folder)));
       box.querySelector('#dirChange').addEventListener('click', async () => {
         const dir = await changeNotebooksFolder();
@@ -1013,6 +1058,7 @@ async function start() {
   editor = new Editor(app);
   setCollapsed(NS.prefGet('collapsed') === '1', false);
   setSound(NS.prefGet('sound') !== '0');
+  if (seeThroughOn()) setSeeThrough(true);
   wire();
   try {
     await loadNotebook();

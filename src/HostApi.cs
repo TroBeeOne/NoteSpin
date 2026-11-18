@@ -71,6 +71,13 @@ namespace NoteSpin
 
         public string ShowLicenses() => Do(() => form.ShowLicenses());
 
+        /// <summary>The main window's see-through background on or off; whether it's on (false if Windows wouldn't).</summary>
+        public string SeeThroughSet(bool on) => Do(() =>
+        {
+            if (noteWin != null) throw new InvalidOperationException("Only the main window can do that.");
+            return form.SetSeeThrough(on);
+        });
+
         public string ShowFolder(string which) => Do(() =>
         {
             string dir = which == "safety" ? lib.SafetyDir : lib.NotebooksDir;

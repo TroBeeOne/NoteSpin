@@ -5,10 +5,10 @@ using System.Windows.Forms;
 
 namespace NoteSpin
 {
-    /// <summary>The few Windows calls the note window needs that Windows Forms doesn't offer.</summary>
+    /// <summary>The few Windows calls NoteSpin's windows need that Windows Forms doesn't offer.</summary>
     internal static class Native
     {
-        public const int WM_NCHITTEST = 0x0084, WM_NCLBUTTONDOWN = 0x00A1, WM_NCLBUTTONDBLCLK = 0x00A3,
+        public const int WM_SETCURSOR = 0x0020, WM_NCHITTEST = 0x0084, WM_NCLBUTTONDOWN = 0x00A1, WM_NCLBUTTONDBLCLK = 0x00A3,
             WM_MOUSEMOVE = 0x0200, WM_LBUTTONUP = 0x0202, WM_CAPTURECHANGED = 0x0215;
         public const int HTCLIENT = 1, HTCAPTION = 2, HTLEFT = 10, HTRIGHT = 11, HTTOP = 12, HTTOPLEFT = 13, HTTOPRIGHT = 14,
             HTBOTTOM = 15, HTBOTTOMLEFT = 16, HTBOTTOMRIGHT = 17;
@@ -28,9 +28,37 @@ namespace NoteSpin
         [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
         [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr hWnd, int attr, ref int value, int size);
         [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hWnd, int attr, out int value, int size);
+        [DllImport("dwmapi.dll")] static extern int DwmEnableBlurBehindWindow(IntPtr hWnd, ref DWM_BLURBEHIND blurBehind);
+        [DllImport("gdi32.dll")] static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
+        [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr obj);
 
         [StructLayout(LayoutKind.Sequential)]
         struct RECT { public int Left, Top, Right, Bottom; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct DWM_BLURBEHIND
+        {
+            public int dwFlags;
+            [MarshalAs(UnmanagedType.Bool)] public bool fEnable;
+            public IntPtr hRgnBlur;
+            [MarshalAs(UnmanagedType.Bool)] public bool fTransitionOnMaximized;
+        }
+        const int DWM_BB_ENABLE = 1, DWM_BB_BLURREGION = 2;
+
+        /// <summary>
+        /// Lets what's behind a window show through the see-through parts of its client area (the page's
+        /// transparent pixels), or makes it solid again. "Blur behind" with an empty blur region does exactly
+        /// that and nothing more: nothing is blurred, the window's own pixels are simply laid over the
+        /// desktop. False if Windows wouldn't.
+        /// </summary>
+        public static bool SeeThrough(IntPtr hWnd, bool on)
+        {
+            IntPtr none = on ? CreateRectRgn(0, 0, -1, -1) : IntPtr.Zero;
+            var bb = new DWM_BLURBEHIND { dwFlags = DWM_BB_ENABLE | (on ? DWM_BB_BLURREGION : 0), fEnable = on, hRgnBlur = none };
+            try { return DwmEnableBlurBehindWindow(hWnd, ref bb) == 0; }
+            catch { return false; }
+            finally { if (none != IntPtr.Zero) DeleteObject(none); }
+        }
 
         /// <summary>Whether the main mouse button is down right now (the physical one, so a left-handed mouse counts too).</summary>
         public static bool PrimaryButtonDown() =>

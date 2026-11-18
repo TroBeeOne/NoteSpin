@@ -65,6 +65,12 @@ Moving around:
 The **sound** button turns the click of falling cards on and off. The arrow at the top of the panel folds it
 down to a strip of icons (it folds by itself in a narrow window). Everything sizes to the window.
 
+**See-through background.** *Settings → Background → See-through background around the cards* lets the
+desktop, and any window behind NoteSpin, show through the space around the cards. The **Opacity** slider sets
+how much of the dark background stays over it (80% to start: mostly dark, the desktop faintly behind); while
+the slider is held, the Settings dialog's shading lifts so you can see the result. The panel, the cards and
+open notes stay solid, and the cards still cast their shadows. Off, the background is solid as before.
+
 ## Writing notes
 
 - **The first line is the title.** It's what the card shows in large type, and what A–Z order sorts by.
@@ -289,7 +295,8 @@ host object, and the C# side passes notes and messages between them (`NoteWin…
 (`exportState`/`openState` in `editor.js`), including the key of an unlocked note, so only one window ever has
 it open.
 
-- **C#:** `src\MainForm.cs` (main window, Windows dialogs, the note windows and the drop target for them),
+- **C#:** `src\MainForm.cs` (main window and its see-through background, Windows dialogs, the note windows
+  and the drop target for them),
   `src\NoteWindow.cs` (a note window: resizing, moving, following a drag, its place and pin),
   `src\StickyNotes.cs` (reading a copy of Microsoft Sticky Notes' notes), `src\PageHost.cs` (the web view
   in each window: serving the page, what it may open), `src\Native.cs` (the few Windows calls needed),

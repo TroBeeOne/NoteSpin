@@ -214,7 +214,8 @@ export class Spinner {
   /* ---------- scene ---------- */
 
   initScene() {
-    const r = this.renderer = new THREE.WebGLRenderer({antialias: true, powerPreference: 'high-performance'});
+    // alpha: the space around the cards can be see-through (setBackground)
+    const r = this.renderer = new THREE.WebGLRenderer({antialias: true, alpha: true, powerPreference: 'high-performance'});
     r.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFShadowMap;
@@ -248,11 +249,18 @@ export class Spinner {
     rim.position.set(0, 6, -7);
     scene.add(rim);
 
-    const desk = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.MeshStandardMaterial({color: 0x1a1d23, roughness: 0.9, metalness: 0.05}));
+    const desk = this.desk = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.MeshStandardMaterial({color: 0x1a1d23, roughness: 0.9, metalness: 0.05}));
     desk.rotation.x = -Math.PI / 2;
     desk.position.y = FLOOR;
     desk.receiveShadow = true;
     scene.add(desk);
+    // with a see-through background the desk goes, but not the shadows on it
+    const shadows = this.deskShadows = new THREE.Mesh(desk.geometry, new THREE.ShadowMaterial({opacity: 0.4}));
+    shadows.rotation.x = -Math.PI / 2;
+    shadows.position.y = FLOOR;
+    shadows.receiveShadow = true;
+    shadows.visible = false;
+    scene.add(shadows);
 
     this.buildFrame();
 
@@ -612,6 +620,19 @@ export class Spinner {
   }
 
   /* ---------- drawing ---------- */
+
+  /**
+   * The space around the cards: solid (1), or see-through, keeping this much (0 to 1) of the dark
+   * background over whatever the window shows behind it. See-through, the desk goes and its shadows stay.
+   */
+  setBackground(alpha) {
+    const clear = alpha < 1;
+    this.scene.background = clear ? null : new THREE.Color(BG);
+    this.renderer.setClearColor(BG, clear ? clamp(alpha, 0, 1) : 1);
+    this.desk.visible = !clear;
+    this.deskShadows.visible = clear;
+    this.wake();
+  }
 
   wake() {
     this.idle = 0;
