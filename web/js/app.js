@@ -150,9 +150,12 @@ function buildItems() {
   return cats.map(c => categoryItem(c, by.get(c.id)));
 }
 
+// The cards right behind the front one show their titles, except category cards: their band has the name already
+const titlesBehind = () => state.view !== 'categories';
+
 function rebuild(focusId) {
   state.items = buildItems();
-  spinner.setItems(state.items, focusId);
+  spinner.setItems(state.items, focusId, {titlesBehind: titlesBehind()});
   updatePanel();
 }
 
@@ -169,6 +172,13 @@ function updatePanel() {
     $('crumbName').textContent = c?.name || '';
     $('crumbDot').style.background = c?.color || '';
   }
+  // the folded panel's one button for both: its icon shows the view that's on, as the sound button does
+  const cats = state.view !== 'all', vt = $('viewToggle');
+  vt.innerHTML = `<svg><use href="#i-${cats ? 'grid' : 'cards'}"/></svg>`;
+  vt.title = !cats ? 'Showing all notes (click to show categories)'
+    : inCat ? `Showing “${state.catMap.get(state.catId)?.name || ''}” (click to show all notes)`
+    : 'Showing categories (click to show all notes)';
+  vt.setAttribute('aria-label', vt.title);
   $('searchClear').hidden = !state.query;
   $('searchBox').classList.toggle('active', !!state.query);
   $('searchInfo').innerHTML = state.query && state.matches
@@ -270,6 +280,17 @@ async function setSeeThrough(on, level = seeThroughLevel()) {
   return ok;
 }
 
+/* ---------- the spinner base hidden (Settings) ---------- */
+
+const baseHiddenOn = () => NS.prefGet('hideBase') === '1';
+
+// Only the cards show, framed on their own, so the window can be narrower; there's no view to straighten
+function setBaseHidden(on) {
+  spinner.setBaseHidden(on);
+  $('viewBtn').hidden = on;
+  NS.call('BaseHiddenSet', on).catch(() => {});
+}
+
 /* ---------- search ---------- */
 
 async function runSearch({rebuildAfter = true} = {}) {
@@ -294,7 +315,7 @@ async function runSearch({rebuildAfter = true} = {}) {
   }
   if (rebuildAfter) {
     state.items = buildItems();
-    spinner.setItems(state.items, state.items[0]?.id ?? null);
+    spinner.setItems(state.items, state.items[0]?.id ?? null, {titlesBehind: titlesBehind()});
     updatePanel();
   }
 }
@@ -717,6 +738,90 @@ async function importStickyNotes() {
   toast(`Copied ${plural(count, 'note')} from Sticky Notes.`);
 }
 
+/* ---------- notes from text files dropped on the window ----------
+   Each .txt file becomes a new note in General, after asking: the first line is its title, each line a
+   paragraph (spaces and tabs kept). A file over TEXT_MAX, empty, or not plain text is left out, saying why. */
+
+const TEXT_MAX = 1024 * 1024;
+
+// A text file's bytes as text: UTF-8 or UTF-16 (with or without the mark Notepad starts them with), else the
+// PC's own "ANSI" code page (older Notepad files)
+function decodeText(buf, ansi) {
+  const b = new Uint8Array(buf);
+  const dec = (enc, from = 0, fatal = false) => new TextDecoder(enc, {fatal}).decode(b.subarray(from));
+  if (b[0] === 0xEF && b[1] === 0xBB && b[2] === 0xBF) return dec('utf-8', 3);
+  if (b[0] === 0xFF && b[1] === 0xFE) return dec('utf-16le', 2);
+  if (b[0] === 0xFE && b[1] === 0xFF) return dec('utf-16be', 2);
+  // UTF-16 without the mark: in mostly-English text every other byte is 0
+  const n = Math.min(b.length, 400);
+  let odd = 0, even = 0;
+  for (let i = 0; i < n; i++) if (!b[i]) i % 2 ? odd++ : even++;
+  if (n >= 4 && odd > n / 4 && even < n / 40) return dec('utf-16le');
+  if (n >= 4 && even > n / 4 && odd < n / 40) return dec('utf-16be');
+  try { return dec('utf-8', 0, true); } catch { /* not UTF-8 */ }
+  try { return dec(ansi || 'windows-1252'); } catch { return dec('windows-1252'); }
+}
+
+const mb = bytes => (bytes / 1024 / 1024).toFixed(1).replace(/\.0$/, '') + ' MB';
+
+// What each file would make: {name, doc, lines} or {name, skip: why}
+async function readTextFile(f, ansi) {
+  if (f.size > TEXT_MAX) return {name: f.name, skip: `too big (${mb(f.size)}; up to ${mb(TEXT_MAX)})`};
+  let text;
+  try { text = decodeText(await f.arrayBuffer(), ansi); }
+  catch { return {name: f.name, skip: 'couldn\'t be read'}; }
+  if (text.includes('\0')) return {name: f.name, skip: 'isn\'t plain text'};
+  // blank lines at the start and end go; the first line is the title
+  text = text.replace(/\r\n?/g, '\n').replace(/^(?:[ \t]*\n)+/, '').replace(/(?:\n[ \t]*)+$/, '');
+  if (!text.trim()) return {name: f.name, skip: 'empty'};
+  const doc = analyze(textToBlocks(text));
+  return {name: f.name, doc, lines: text.split('\n').length};
+}
+
+async function notesFromTextFiles(files) {
+  if (editor.isOpen || dialogOpen()) return;
+  const ansi = await NS.call('AppInfo').then(i => i.ansi).catch(() => null);
+  const read = [];
+  for (const f of files) read.push(await readTextFile(f, ansi));
+  const ok = read.filter(r => !r.skip), skipped = read.filter(r => r.skip);
+  const skipText = skipped.map(r => `“${r.name}”: ${r.skip}`).join('; ');
+  if (!ok.length) {
+    alertDlg(files.length === 1 ? 'No note made from this file' : 'No notes made from these files', skipText.charAt(0).toUpperCase() + skipText.slice(1) + '.');
+    return;
+  }
+  const general = state.catMap.get(GENERAL_ID)?.name || 'General';
+  const where = ok.length === 1 ? `It goes in ${general}; you can change its category in the note.`
+    : `They go in ${general}; you can change a note's category in the note.`;
+  const go = await dialog({
+    title: ok.length === 1 ? `Create a note from “${ok[0].name}”?` : `Create ${ok.length} notes from these files?`,
+    wide: true,
+    html: (ok.length === 1
+      ? `<p class="lead">${esc(ok[0].doc.title)}</p>
+        <p class="hint">${plural(ok[0].lines, 'line')}. The first line is the note's title. ${esc(where)}</p>`
+      : `<ul class="txt-list">${ok.map(r => `<li><strong>${esc(r.name)}</strong><span>${esc(r.doc.title)}</span></li>`).join('')}</ul>
+        <p class="hint">Each file becomes a note, its first line the title. ${esc(where)}</p>`) +
+      (skipped.length ? `<p class="hint">Left out: ${esc(skipText)}.</p>` : ''),
+    buttons: [{label: 'Cancel', value: null, left: true}, {label: ok.length === 1 ? 'Create note' : `Create ${ok.length} notes`, value: true, primary: true}],
+  });
+  if (!go) return;
+  const ids = [];
+  try {
+    for (const r of ok) {
+      const res = await NS.call('NoteSave', JSON.stringify({
+        id: '', title: r.doc.title, body: r.doc.html, preview: JSON.stringify(r.doc.lines), search: r.doc.search,
+        locked: false, category: '', categoryColor: undefined,
+      }));
+      ids.push(res.id);
+    }
+  } catch (e) {
+    alertDlg('The note wasn\'t made', e.message);
+  }
+  if (!ids.length) return;
+  await loadNotes(ids[0]);
+  if (ids.length === 1 && ok.length === 1) await openItem({id: ids[0], kind: 'note'});
+  else toast(`Created ${plural(ids.length, 'note')} in ${general}.`);
+}
+
 /* ---------- categories ---------- */
 
 function pickPaletteColor(anchor, current) {
@@ -808,9 +913,69 @@ async function manageCategories() {
 
 /* ---------- settings ---------- */
 
-const folderNote = dir => inOneDrive(dir)
+// portable: the NoteSpin Data folder beside NoteSpin.exe, where everything is kept (null when it isn't portable)
+let portableDir = null;
+const inFolder = (p, dir) => !!dir && (p || '').toLowerCase().startsWith(dir.toLowerCase().replace(/\\?$/, '\\'));
+
+const folderNote = dir => inFolder(dir, portableDir)
+  ? 'In NoteSpin\'s own folder, so the notebooks go wherever the NoteSpin folder goes. Keep backups somewhere else too: a USB drive is easy to lose.'
+  : inOneDrive(dir)
   ? 'In OneDrive, so your notebooks are backed up to the cloud. Use NoteSpin on one PC at a time: OneDrive can\'t merge a notebook changed in two places.'
   : 'Not in a OneDrive folder, so the notebooks are only on this PC (and wherever else you keep backups).';
+
+/* ---------- portable: everything kept beside NoteSpin.exe (Settings) ---------- */
+
+// Turning it on or off restarts NoteSpin, which moves things over on the way (PortableSwitch in the C# side)
+async function switchPortable(on, bring) {
+  try {
+    if (await NS.call('PortableSet', on, bring)) toast('NoteSpin is restarting…', {timeout: 20000});
+  } catch (e) {
+    alertDlg(on ? 'NoteSpin can\'t be portable here' : 'NoteSpin couldn\'t switch', e.message);
+  }
+}
+
+async function makePortable(info) {
+  const n = state.notebooks.length;
+  const choice = await dialog({
+    title: 'Make NoteSpin portable?',
+    wide: true,
+    html: `<p>NoteSpin will keep its settings and notebooks in this folder, beside NoteSpin.exe, and restart:</p>
+      <p class="lead path">${esc(info.portableDir)}</p>
+      <p>Copy your ${plural(n, 'notebook')} there? The ones on this PC stay as they are.</p>
+      <p class="hint">To take NoteSpin and your notes to another PC, copy the whole NoteSpin folder to a USB drive and
+      run it from there. The PC needs the WebView2 Runtime, which comes with Windows 11. Close NoteSpin before
+      unplugging the drive.</p>`,
+    buttons: [
+      {label: 'Cancel', value: null, left: true},
+      {label: 'Start empty', value: 'empty'},
+      {label: n === 1 ? 'Copy my notebook' : 'Copy my notebooks', value: 'copy', primary: true},
+    ],
+  });
+  if (choice) await switchPortable(true, choice === 'copy');
+}
+
+async function stopPortable(info) {
+  const n = state.notebooks.length;
+  const choice = await dialog({
+    title: 'Keep everything on this PC again?',
+    wide: true,
+    html: `<p>NoteSpin will keep its settings and notebooks on this PC again, and restart.</p>
+      <p>Copy the ${plural(n, 'notebook')} and settings NoteSpin is using now to this PC? The notebooks go to this
+      PC's notebooks folder (normally ${esc(info.pcNotebooksDir)}).</p>
+      <p class="hint">A notebook already on this PC is never replaced: one with the same name comes in as “Name (2)”.
+      <strong>Leave them</strong> goes back to this PC's own notebooks and settings, as they were.
+      Either way the ${esc(PORTABLE_NAME)} folder is renamed “${esc(PORTABLE_NAME)} (off)”, with everything still in
+      it: rename it back to make NoteSpin portable again, or delete it once you don't need it.</p>`,
+    buttons: [
+      {label: 'Cancel', value: null, left: true},
+      {label: 'Leave them', value: 'leave'},
+      {label: 'Copy them to this PC', value: 'copy', primary: true},
+    ],
+  });
+  if (choice) await switchPortable(false, choice === 'copy');
+}
+
+const PORTABLE_NAME = 'NoteSpin Data';
 
 /**
  * Uses another folder for the notebooks, moving them there or switching to what's already there.
@@ -860,11 +1025,24 @@ async function showSettings() {
       <div class="row-btns"><button class="btn" type="button" id="dirChange">Change…</button>
         <button class="btn" type="button" data-folder="notebooks">Open folder</button>
         <button class="btn" type="button" data-folder="safety">Safety Backups</button></div>
+      <h3>Portable</h3>
+      ${info.portable ? `<p>NoteSpin is portable: its settings and notebooks are kept in</p>
+      <p class="path">${esc(info.portableDir)}</p>
+      <p class="hint">Copy or move the whole NoteSpin folder, ${esc(PORTABLE_NAME)} and all, and your notes go with it:
+      to a USB drive, say, to use NoteSpin on any PC.</p>
+      <div class="row-btns"><button class="btn" type="button" id="portableBtn">Keep everything on this PC…</button></div>`
+      : `<p class="hint">Keep NoteSpin's settings and notebooks in its own folder, beside NoteSpin.exe, so the whole
+      NoteSpin folder can go on a USB drive and run on any PC, with your notes.</p>
+      <div class="row-btns"><button class="btn" type="button" id="portableBtn">Make portable…</button></div>`}
       <h3>Notes</h3>
       <label class="check"><input type="checkbox" id="ownWindow"${ownWindow() ? ' checked' : ''}> Always open notes in their own window</label>
       <p class="hint">Otherwise a note opens over the cards. To give it a window of its own, drag it out of NoteSpin by its
       top strip, or click <svg class="inline-icon"><use href="#i-popout"/></svg>. Any number of notes can be out at once,
       each in its own window.</p>
+      <h3>Spinner</h3>
+      <label class="check"><input type="checkbox" id="hideBase"${baseHiddenOn() ? ' checked' : ''}> Hide the spinner base</label>
+      <p class="hint">Only the cards show, without the frame, knobs and stand, so the window can be made narrower. The
+      cards turn and fall as before; dragging sideways no longer turns the view.</p>
       <h3>Background</h3>
       <label class="check"><input type="checkbox" id="seeThrough"${seeThroughOn() ? ' checked' : ''}> See-through background around the cards</label>
       <div class="range-row${seeThroughOn() ? '' : ' off'}" id="seeRow"><span>Opacity</span>
@@ -877,8 +1055,9 @@ async function showSettings() {
       <div class="row-btns" style="margin-bottom:4px"><button class="btn" type="button" id="stickyBtn">Import from Sticky Notes…</button></div>
       <h3>Opening backups</h3>
       <p>Open <strong>.notespin</strong> files with NoteSpin when they're double-clicked in File Explorer.</p>
-      <div class="row-btns"><button class="btn" type="button" id="assocBtn">${assocLabel(info.fileAssoc)}</button>
-        <span class="hint" id="assocState" style="align-self:center">${info.fileAssoc ? 'On for this copy of NoteSpin.' : 'Off.'}</span></div>
+      ${info.portable && !info.fileAssoc ? `<p class="hint">Not while NoteSpin is portable: a USB drive's letter
+      changes from PC to PC.</p>` : `<div class="row-btns"><button class="btn" type="button" id="assocBtn">${assocLabel(info.fileAssoc)}</button>
+        <span class="hint" id="assocState" style="align-self:center">${info.fileAssoc ? 'On for this copy of NoteSpin.' : 'Off.'}</span></div>`}
       <h3>Keyboard</h3>
       <div class="keys">
         <kbd>↑ ↓</kbd><span>Previous / next card (also the mouse wheel, or drag up and down)</span>
@@ -893,7 +1072,8 @@ async function showSettings() {
     buttons: [{label: 'Close', value: true, primary: true}],
     cancelValue: true,
     init: box => {
-      box.querySelector('#assocBtn').addEventListener('click', async e => {
+      box.querySelector('#portableBtn').addEventListener('click', () => info.portable ? stopPortable(info) : makePortable(info));
+      box.querySelector('#assocBtn')?.addEventListener('click', async e => {
         try {
           const on = await NS.call('FileAssocSet', !info.fileAssoc);
           info.fileAssoc = on;
@@ -903,6 +1083,10 @@ async function showSettings() {
       });
       box.querySelector('#ownWindow').addEventListener('change', e => NS.prefSet('noteWindow', e.target.checked ? '1' : '0'));
       box.querySelector('#stickyBtn').addEventListener('click', importStickyNotes);
+      box.querySelector('#hideBase').addEventListener('change', e => {
+        setBaseHidden(e.target.checked);
+        NS.prefSet('hideBase', e.target.checked ? '1' : '0');
+      });
       const seeBox = box.querySelector('#seeThrough'), seeLevel = box.querySelector('#seeLevel'), seeRow = box.querySelector('#seeRow');
       seeBox.addEventListener('change', async () => {
         const ok = await setSeeThrough(seeBox.checked, +seeLevel.value);
@@ -1003,6 +1187,7 @@ function wire() {
   $('searchClear').addEventListener('click', () => { clearSearch(); $('searchInput').focus(); });
   $('searchBox').addEventListener('click', () => { if (document.body.classList.contains('collapsed')) focusSearch(); });
   $('viewSeg').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setView(b.dataset.view); });
+  $('viewToggle').addEventListener('click', () => setView(state.view === 'all' ? 'categories' : 'all'));
   $('orderSeg').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setOrder(b.dataset.order); });
   $('crumbBack').addEventListener('click', leaveCategory);
   $('prevBtn').addEventListener('click', () => spinner.prev());
@@ -1027,11 +1212,16 @@ function wire() {
     if (!hasFiles(e)) return;
     e.preventDefault();
     if (editor.isOpen || dialogOpen()) return;
-    const f = e.dataTransfer.files[0];
-    const p = f ? await NS.filePath(f).catch(() => null) : null;
-    if (!p) return;
-    if (!/\.notespin$/i.test(p)) { toast('Only NoteSpin backups (.notespin files) can be dropped here.'); return; }
-    importFile(p);
+    // a NoteSpin backup is offered for importing; text files become notes
+    const files = [...e.dataTransfer.files];
+    const backup = files.find(f => /\.notespin$/i.test(f.name)), texts = files.filter(f => /\.txt$/i.test(f.name));
+    if (!backup) {
+      if (texts.length) notesFromTextFiles(texts);
+      else if (files.length) toast('Only NoteSpin backups (.notespin) and text files (.txt) can be dropped here.');
+      return;
+    }
+    const p = await NS.filePath(backup).catch(() => null);
+    if (p) importFile(p);
   });
 
   // narrow windows fold the panel away (and unfold it again when there's room)
@@ -1043,6 +1233,29 @@ function wire() {
   };
   addEventListener('resize', fit);
   fit();
+}
+
+// After NoteSpin restarted to turn portable on or off (see PortableSwitch)
+function switchedNotice(n) {
+  const failed = n.failed?.length ? ` ${plural(n.failed.length, 'notebook')} couldn't be copied: ${n.failed.join(', ')}.` : '';
+  if (n.switched === 'on') {
+    toast(`NoteSpin is portable now: everything is kept in ${n.dir}.` +
+      (n.copied ? ` ${plural(n.copied, 'notebook')} copied there.` : '') + failed, {timeout: 12000});
+  } else {
+    dialog({
+      title: 'Everything is on this PC again',
+      wide: true,
+      html: (n.dir
+        ? `<p>${n.copied ? `${plural(n.copied, 'notebook')} and NoteSpin's settings copied` : 'NoteSpin\'s settings copied'} to this PC. The notebooks are in</p>
+          <p class="path">${esc(n.dir)}</p>`
+        : '<p>NoteSpin is using this PC\'s own notebooks and settings again.</p>') +
+        `<p>What NoteSpin kept in its own folder is still in</p><p class="path">${esc(n.off)}</p>
+        <p class="hint">Rename it back to “${esc(PORTABLE_NAME)}” to make NoteSpin portable again, or delete it once
+        you don't need it.${esc(failed)}</p>`,
+      buttons: [{label: 'OK', value: true, primary: true}],
+      cancelValue: true,
+    });
+  }
 }
 
 async function start() {
@@ -1059,6 +1272,7 @@ async function start() {
   setCollapsed(NS.prefGet('collapsed') === '1', false);
   setSound(NS.prefGet('sound') !== '0');
   if (seeThroughOn()) setSeeThrough(true);
+  if (baseHiddenOn()) setBaseHidden(true);
   wire();
   try {
     await loadNotebook();
@@ -1066,8 +1280,10 @@ async function start() {
   } catch (e) {
     alertDlg('NoteSpin couldn\'t read the notebook', e.message);
   }
-  // notebooks moved to the notebooks folder, or a chosen folder that isn't there
+  NS.call('AppInfo').then(i => { portableDir = i.portable ? i.portableDir : null; }).catch(() => {});
+  // notebooks moved to the notebooks folder, or a chosen folder that isn't there; portable turned on or off
   const notice = await NS.call('TakeNotice').catch(() => null);
+  if (notice?.switched) switchedNotice(notice);
   if (notice?.moved) {
     toast(`Your ${plural(notice.moved, 'notebook')} moved to ${notice.to}${inOneDrive(notice.to) ? ', where OneDrive backs them up' : ''}.`, {timeout: 10000});
   } else if (notice?.missing) {

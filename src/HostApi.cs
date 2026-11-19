@@ -59,6 +59,24 @@ namespace NoteSpin
             ["safetyDir"] = lib.SafetyDir,
             ["sqlite"] = Sqlite.Version,
             ["fileAssoc"] = FileAssoc.IsSet(),
+            ["portable"] = Places.Portable,
+            ["portableDir"] = Places.PortableDir,
+            ["pcNotebooksDir"] = Places.PcNotebooksDir,
+            ["ansi"] = System.Text.Encoding.Default.WebName,   // the PC's "ANSI" code page, for older text files
+        });
+
+        /// <summary>
+        /// Turns portable on or off (see PortableSwitch): NoteSpin closes and starts again, switching on the way.
+        /// bring: the notebooks (and, going back to this PC, the settings) come along. False: nothing to switch.
+        /// </summary>
+        public string PortableSet(bool on, bool bring) => Do(() =>
+        {
+            MainPageOnly();
+            if (on == Places.Portable) return false;
+            if (on) PortableSwitch.CheckCanBePortable();
+            PortableSwitch.Start(on, bring);
+            form.Later(() => form.Close());
+            return true;
         });
 
         // settings: the page calls these synchronously while it starts up
@@ -76,6 +94,13 @@ namespace NoteSpin
         {
             if (noteWin != null) throw new InvalidOperationException("Only the main window can do that.");
             return form.SetSeeThrough(on);
+        });
+
+        /// <summary>The spinner base hidden or shown (Settings); hidden, the main window can be made narrower.</summary>
+        public string BaseHiddenSet(bool hidden) => Do(() =>
+        {
+            MainPageOnly();
+            form.SetNarrow(hidden);
         });
 
         public string ShowFolder(string which) => Do(() =>

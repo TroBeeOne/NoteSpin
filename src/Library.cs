@@ -9,14 +9,15 @@ namespace NoteSpin
     /// <summary>
     /// The notebooks (one .notespin file each) in the notebooks folder, and the one that's open.
     /// The folder is Documents\NoteSpin unless another was chosen in Settings: on a PC where OneDrive backs up
-    /// Documents (the usual setup), the notebooks are backed up to the cloud with it. Before a backup replaces
+    /// Documents (the usual setup), the notebooks are backed up to the cloud with it. Portable, it's
+    /// NoteSpin Data\Notebooks beside NoteSpin.exe (see Places). Before a backup replaces
     /// the open notebook, a copy of it goes to "Safety Backups" inside the notebooks folder.
     /// Earlier versions kept notebooks in %LOCALAPPDATA%\NoteSpin\Notebooks; they're moved over on start.
     /// </summary>
     internal sealed class Library : IDisposable
     {
         const int SafetyKeep = 30;
-        const string FolderKey = "notebooks:dir";
+        internal const string FolderKey = "notebooks:dir", LastKey = "notebook:last";
         readonly Settings settings;
         readonly string legacyDir, legacySafetyDir;
 
@@ -28,7 +29,7 @@ namespace NoteSpin
         /// <summary>Something to tell the person once, when the page starts (notebooks moved, a folder missing).</summary>
         public Dictionary<string, object> Notice { get; set; }
 
-        /// <param name="defaultDir">Documents\NoteSpin (in a test data folder when NOTESPIN_DATA is set).</param>
+        /// <param name="defaultDir">Documents\NoteSpin, or NoteSpin Data\Notebooks when portable (see Places).</param>
         public Library(string dataDir, Settings settings, string defaultDir)
         {
             this.settings = settings;
@@ -36,7 +37,7 @@ namespace NoteSpin
             legacyDir = Path.Combine(dataDir, "Notebooks");
             legacySafetyDir = Path.Combine(dataDir, "Safety Backups");
 
-            string chosen = settings.Get(FolderKey);
+            string chosen = settings.GetPath(FolderKey);
             NotebooksDir = DefaultDir;
             if (!string.IsNullOrEmpty(chosen))
             {
@@ -46,7 +47,7 @@ namespace NoteSpin
             Directory.CreateDirectory(NotebooksDir);
             MoveLegacyNotebooks();
 
-            string last = settings.Get("notebook:last");
+            string last = settings.GetPath(LastKey);
             if (!string.IsNullOrEmpty(last) && File.Exists(last) && InLibrary(last) && TryOpen(last)) return;
             foreach (string f in Files())
                 if (TryOpen(f)) return;
@@ -60,7 +61,7 @@ namespace NoteSpin
         void MoveLegacyNotebooks()
         {
             if (!Directory.Exists(legacyDir) || SamePath(legacyDir, NotebooksDir)) return;
-            string last = settings.Get("notebook:last");
+            string last = settings.GetPath(LastKey);
             int moved = 0;
             foreach (string f in Directory.GetFiles(legacyDir, "*" + Notebook.Ext))
             {
@@ -69,7 +70,7 @@ namespace NoteSpin
                     string dest = FreePathIn(NotebooksDir, Path.GetFileNameWithoutExtension(f));
                     File.Move(f, dest);
                     moved++;
-                    if (!string.IsNullOrEmpty(last) && SamePath(last, f)) settings.Set("notebook:last", dest);
+                    if (!string.IsNullOrEmpty(last) && SamePath(last, f)) settings.SetPath(LastKey, dest);
                 }
                 catch { }
             }
@@ -138,7 +139,7 @@ namespace NoteSpin
                 }
             }
             NotebooksDir = dir;
-            settings.Set(FolderKey, dir);
+            settings.SetPath(FolderKey, dir);
             // open the notebook that was open (if it moved along), else the first one there, else a new "My Notes"
             if (!(currentNew != null && TryOpen(currentNew)) && !Files().Any(TryOpen))
                 Switch(FreePathIn(dir, "My Notes"));
@@ -160,7 +161,7 @@ namespace NoteSpin
             var nb = new Notebook(path);
             Current?.Dispose();
             Current = nb;
-            settings.Set("notebook:last", nb.FilePath);
+            settings.SetPath(LastKey, nb.FilePath);
         }
 
         public bool InLibrary(string path) =>
@@ -198,7 +199,7 @@ namespace NoteSpin
         /// <summary>A path in the notebooks folder for this name, adding " (2)", " (3)"… if it's taken.</summary>
         string FreePath(string name, string except = null) => FreePathIn(NotebooksDir, name, except);
 
-        static string FreePathIn(string dir, string name, string except = null)
+        internal static string FreePathIn(string dir, string name, string except = null)
         {
             string baseName = CleanName(name);
             if (baseName.Length == 0) baseName = "Notebook";

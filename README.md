@@ -3,8 +3,9 @@
 Sticky notes on a spinning 3D card wheel, for Windows. Each note is a pastel card in the colour of its
 category; turn the wheel to flip through them, click the front card to open it.
 
-NoteSpin is portable: copy the `NoteSpin` folder anywhere and run `NoteSpin.exe`. Nothing needs installing.
-It runs on .NET Framework 4.8 and the Microsoft Edge WebView2 Runtime, both part of Windows 10 and 11.
+Nothing needs installing: copy the `NoteSpin` folder anywhere and run `NoteSpin.exe`. It can also be made
+[portable](#portable-notespin-on-a-usb-drive), keeping your notes in its own folder so it runs from a USB drive
+on any PC. It runs on .NET Framework 4.8 and the Microsoft Edge WebView2 Runtime, both part of Windows 10 and 11.
 
 - [Getting started](#getting-started)
 - [The wheel](#the-wheel)
@@ -14,6 +15,7 @@ It runs on .NET Framework 4.8 and the Microsoft Edge WebView2 Runtime, both part
 - [Show, order and search](#show-order-and-search)
 - [Locking a note](#locking-a-note)
 - [Notebooks, folders and backups](#notebooks-folders-and-backups)
+- [Portable: NoteSpin on a USB drive](#portable-notespin-on-a-usb-drive)
 - [Copying notes from Sticky Notes](#copying-notes-from-sticky-notes)
 - [Keyboard, mouse and touch](#keyboard-mouse-and-touch)
 - [Questions](#questions)
@@ -46,7 +48,7 @@ What you see:
 | **The front card** | The note you're on: its title, and the start of the note with its lists and checkboxes. If there's more than fits, it fades out at the bottom. A locked note shows only its title and a lock. |
 | **The band across the top** | The note's category, in that category's colour, and (quieter) when the note was last edited: *Today*, *Yesterday*, *Nov 12*, *Nov 12, 2025*. |
 | **The tab on the right** | In A–Z order, the first letter of the title (so you can see where you are in the alphabet). In Recent order there's no tab; the date on the band says it. On category cards, the number of notes. |
-| **The cards behind** | The next three notes: just their bands show. Click one to bring it to the front. |
+| **The cards behind** | The next three notes: the two right behind show their band and the first line of their title, the third just its band. Click one to bring it to the front. (In the Categories view only the bands show: they carry the category's name already.) |
 | **The card in front, lying down** | The note before. Its writing shows faintly through the paper, reversed. |
 | **The knobs** | They turn with the drum and take on the colour of the card at the front. |
 
@@ -58,18 +60,27 @@ Moving around:
 - **Previous / Next** and the **arrow keys** always move exactly one card.
 - **Click a card behind** the front one to bring it forward. **Click the front card** to open it.
 - **Drag sideways** to look at the wheel from another side; the **straighten** button (bottom of the panel)
-  turns the view back.
-- The wheel goes round: after the last note comes the first again. With only a few notes there's a gap
-  between the last and the first, so you can tell where the end is.
+  turns the view back. (Not with the spinner base hidden: see below.)
+- The wheel goes round: after the last note comes the first again. With fewer than ten notes there's a gap
+  between the last and the first, so you can tell where the end is: turning past it, the front is empty for a
+  moment. (The cards behind the last note are the first ones, standing just as the others do.)
 
 The **sound** button turns the click of falling cards on and off. The arrow at the top of the panel folds it
-down to a strip of icons (it folds by itself in a narrow window). Everything sizes to the window.
+down to a strip of icons (it folds by itself in a narrow window). Folded, one button under the search switches
+between **All notes** and **Categories**: its icon shows which is on, a stack of cards or a grid. In a window
+too short for the whole strip, it scrolls. Everything sizes to the window.
 
 **See-through background.** *Settings → Background → See-through background around the cards* lets the
 desktop, and any window behind NoteSpin, show through the space around the cards. The **Opacity** slider sets
 how much of the dark background stays over it (80% to start: mostly dark, the desktop faintly behind); while
 the slider is held, the Settings dialog's shading lifts so you can see the result. The panel, the cards and
 open notes stay solid, and the cards still cast their shadows. Off, the background is solid as before.
+
+**Hide the spinner base.** *Settings → Spinner → Hide the spinner base* shows just the cards, without the
+frame, knobs, axle and stand (or their shadows). The cards turn, lean and fall exactly as before, and the view
+is framed around them alone, so the window can be made much narrower (down to about 340 pixels), or as wide as
+you like. Dragging sideways no longer turns the view, and the straighten button goes. It works with the
+see-through background too.
 
 ## Writing notes
 
@@ -91,6 +102,11 @@ open notes stay solid, and the cards still cast their shadows. Off, the backgrou
   - Pressing the same list button again turns the list back into ordinary lines; another list button
     changes its kind.
 - **Pasting** keeps the text, its lines and its lists, and drops fonts, sizes, colours, links and pictures.
+- **Text files**: drop a `.txt` file (or several) from File Explorer onto the cards, and NoteSpin asks whether
+  to make a note of each. The first line becomes the title and every line a paragraph, spaces and tabs kept;
+  the notes go in General (change the category in the note). One note opens straight away. Files saved as
+  UTF-8, UTF-16 or the older "ANSI" all read correctly. A file over 1 MB, an empty one, or one that isn't
+  plain text is left out, saying why. Dropping does nothing while a note is open over the cards.
 - **Saving** happens as you type (the band says *Saved*). Closing the window saves anything still waiting.
 - **Deleting**: the bin button in a note. A note closed with nothing in it is deleted automatically, with
   **Undo** in the message that appears.
@@ -192,6 +208,34 @@ A `.notespin` file is an ordinary SQLite database, so any SQLite tool can open i
 files by a stamp inside them, whatever they're called, and checks a file before importing it. A notebook is
 always a single file (nothing beside it), so it can be copied while NoteSpin is closed.
 
+## Portable: NoteSpin on a USB drive
+
+NoteSpin can keep everything it saves in its own folder instead of on the PC, so the whole NoteSpin folder can go
+on a USB drive and run on any PC, with your notes.
+
+- **Turning it on.** *Settings → Portable → Make portable…* asks whether to **copy your notebooks** there or
+  **start empty**, then restarts NoteSpin. From then on its settings, its notebooks (in
+  `NoteSpin Data\Notebooks`) and its web view's cache are in a `NoteSpin Data` folder beside `NoteSpin.exe`.
+  The notebooks and settings on the PC stay as they were. Or download `NoteSpin-<version>-portable.zip`, which
+  comes with an empty `NoteSpin Data` folder: unzip it onto the drive and it starts portable. (An empty folder
+  named `NoteSpin Data` made beside `NoteSpin.exe` does the same.)
+- **Using it.** Copy the whole NoteSpin folder, `NoteSpin Data` and all, to a USB drive and run `NoteSpin.exe`
+  from there. The drive's letter can change from PC to PC: NoteSpin keeps the paths on its own drive relative to
+  its folder. The PC needs the WebView2 Runtime, which comes with Windows 11 (and most Windows 10 PCs).
+  **Close NoteSpin before unplugging the drive**, and keep backups somewhere else too: a USB drive is easy to
+  lose. *Opening backups* (double-clicking `.notespin` files) isn't offered while NoteSpin is portable, since it
+  would point at one drive letter.
+- **Turning it off.** *Settings → Portable → Keep everything on this PC…* restarts NoteSpin with its settings
+  and notebooks on the PC again:
+  - **Copy them to this PC**: the notebooks go to this PC's notebooks folder (normally `Documents\NoteSpin`),
+    and NoteSpin's settings come along. A notebook already there is never replaced: one with the same name comes
+    in as *Name (2)*. The PC's own settings as they were are kept as `settings.db.bak`.
+  - **Leave them**: NoteSpin goes back to this PC's own notebooks and settings, as they were before.
+
+  Either way `NoteSpin Data` is renamed `NoteSpin Data (off)`, with everything still in it: rename it back to
+  make NoteSpin portable again, or delete it once you don't need it. Renaming or deleting `NoteSpin Data`
+  yourself, while NoteSpin is closed, is the same as *Leave them*.
+
 ## Copying notes from Sticky Notes
 
 Notes from **Microsoft Sticky Notes** (the app that comes with Windows) can be copied into the open notebook:
@@ -230,18 +274,20 @@ Notes from **Microsoft Sticky Notes** (the app that comes with Windows) can be c
 |---|---|
 | Wheel | One card per notch |
 | Drag (swipe) up or down | Turn the wheel; flick to spin; press to stop |
-| Drag sideways | Look at the wheel from another side |
+| Drag sideways | Look at the wheel from another side (not with the spinner base hidden) |
 | Click (tap) the front card | Open it |
 | Click (tap) a card behind | Bring it to the front |
 | Drag a note's top strip out of the window | Give it a window of its own |
 | Drop a note window on the front card | Put the note back |
 | Drop a `.notespin` file on the window | Import it |
+| Drop `.txt` files on the window | Make a note of each (after asking) |
 
 ## Questions
 
 **Where are my notes?** In the notebooks folder: *Settings → Notebooks folder* shows it, *Open folder* opens it.
 Settings for this PC (window position, which notebook was open, the panel, sound) are in
-`%LOCALAPPDATA%\NoteSpin` and aren't synced.
+`%LOCALAPPDATA%\NoteSpin` and aren't synced. When NoteSpin is portable, everything is in `NoteSpin Data` beside
+`NoteSpin.exe`.
 
 **I forgot a note's password.** It can't be opened, but it can be deleted from its password prompt.
 
@@ -253,6 +299,8 @@ once. Open both and copy what you need into one.
 
 **Moving to a new PC.** Sign in to OneDrive there (or copy the notebooks folder over), copy the NoteSpin
 folder, and run it. If the notebooks aren't in `Documents\NoteSpin`, use *Settings → Change…* (*Just switch*).
+Or make NoteSpin portable, copy its folder over, and on the new PC choose *Keep everything on this PC… → Copy
+them to this PC*.
 
 ---
 
@@ -260,12 +308,12 @@ folder, and run it. If the notebooks aren't in `Documents\NoteSpin`, use *Settin
 
 ```powershell
 .\build.ps1          # -> dist\NoteSpin
-.\release.ps1        # build, sign NoteSpin.exe, verify -> NoteSpin-<version>.zip for a GitHub release
+.\release.ps1        # build, sign NoteSpin.exe, verify -> NoteSpin-<version>.zip and -portable.zip for a GitHub release
 ```
 
 `release.ps1` signs with Azure Artifact Signing: it needs the `sign` tool
 (`dotnet tool install -g --prerelease sign`) and an `az login` with signing rights. The version comes from
-`<Version>` in `NoteSpin.csproj`.
+`<Version>` in `NoteSpin.csproj`. The portable zip is the same files with an empty `NoteSpin Data` folder.
 
 Needs the .NET SDK on the build PC only. The output folder is the whole app (about 3 MB):
 
@@ -295,17 +343,21 @@ host object, and the C# side passes notes and messages between them (`NoteWin…
 (`exportState`/`openState` in `editor.js`), including the key of an unlocked note, so only one window ever has
 it open.
 
-- **C#:** `src\MainForm.cs` (main window and its see-through background, Windows dialogs, the note windows
+- **C#:** `src\MainForm.cs` (main window, its see-through background and narrower minimum with the spinner
+  base hidden, Windows dialogs, the note windows
   and the drop target for them),
   `src\NoteWindow.cs` (a note window: resizing, moving, following a drag, its place and pin),
   `src\StickyNotes.cs` (reading a copy of Microsoft Sticky Notes' notes), `src\PageHost.cs` (the web view
   in each window: serving the page, what it may open), `src\Native.cs` (the few Windows calls needed),
   `src\HostApi.cs` (what the pages can call),
   `src\Library.cs` (the notebooks folder, switching, backups), `src\Notebook.cs` (one notebook file:
-  schema, notes, categories, search), `src\Settings.cs` (this PC's settings), `src\FileAssoc.cs` (the optional
+  schema, notes, categories, search), `src\Settings.cs` (the app's settings), `src\Places.cs` (where things
+  are kept: on the PC, or portable beside the exe), `src\PortableSwitch.cs` (turning portable on and off, in a
+  restarted NoteSpin once the old one has closed), `src\FileAssoc.cs` (the optional
   double-click setting), `src\FolderPicker.cs` (the Windows folder picker), `src\Sqlite.cs`, `src\WebAssets.cs`.
 - **Pages:** `web\index.html` and `web\note.html`, `web\css\app.css`, and in `web\js`: `app.js` (panel,
-  views, search, notebooks, settings, sending notes to note windows, copying from Sticky Notes), `notewin.js`
+  views, search, notebooks, settings, sending notes to note windows, copying from Sticky Notes, notes from
+  dropped text files), `notewin.js`
   (a note window's page),
   `icons.js` (the icons, for both pages), `spinner.js` (the 3D wheel: drum, cards, movement, input), `cardface.js` (drawing a
   card), `editor.js` (the note editor, list handling, locking prompts), `notes.js` (what a note is made of,
@@ -320,7 +372,10 @@ it open.
 
 Environment variables for testing:
 
-- `NOTESPIN_DATA=<folder>`: use a different data folder (its notebooks stay inside it, in `Notebooks\`).
+- `NOTESPIN_DATA=<folder>`: stands in for `%LOCALAPPDATA%\NoteSpin` (its notebooks stay inside it, in
+  `Notebooks\`). A `NoteSpin Data` folder beside the exe still makes it portable, so to test portable, copy the
+  build somewhere and run it from there with these set: turning portable off then writes to these folders, not
+  the real ones.
 - `NOTESPIN_NOTEBOOKS=<folder>`: stands in for `Documents\NoteSpin` as the default notebooks folder.
 - `NOTESPIN_DEVTOOLS=1`: allow the browser developer tools (F12) and reload (F5).
 - `NOTESPIN_WEB=<the web folder>`: serve the page from disk instead of the exe, so a reload shows changes.

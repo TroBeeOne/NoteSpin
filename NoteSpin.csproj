@@ -13,7 +13,7 @@
     <RootNamespace>NoteSpin</RootNamespace>
     <ApplicationIcon>favicon.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>1.3.0</Version>
+    <Version>1.4.0</Version>
     <Product>NoteSpin</Product>
     <AssemblyTitle>NoteSpin</AssemblyTitle>
     <Description>Sticky notes on a spinning card wheel</Description>

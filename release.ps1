@@ -1,7 +1,8 @@
 <#
 .SYNOPSIS
   Builds NoteSpin, signs NoteSpin.exe with Azure Artifact Signing, verifies it, and zips the app
-  as NoteSpin-<version>.zip, ready to attach to a GitHub release.
+  as NoteSpin-<version>.zip, plus NoteSpin-<version>-portable.zip (the same files with an empty
+  "NoteSpin Data" folder, so it starts portable), ready to attach to a GitHub release.
 
 .DESCRIPTION
   Runs build.ps1 (-> dist\NoteSpin), then signs every unsigned exe/dll in it. Files Microsoft already
@@ -24,7 +25,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.IO.Compression.FileSystem
+Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $out  = Join-Path $here 'dist\NoteSpin'
 
@@ -80,6 +81,15 @@ $zip = Join-Path $here "NoteSpin-$version.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
 [IO.Compression.ZipFile]::CreateFromDirectory($out, $zip, [IO.Compression.CompressionLevel]::Optimal, $false)
 
-$hash = (Get-FileHash $zip -Algorithm SHA256).Hash
-Write-Host ("`nDone: $zip ({0:N0} KB)" -f ((Get-Item $zip).Length / 1KB)) -ForegroundColor Green
-Write-Host "SHA256: $hash"
+# The portable zip: the same files and an empty "NoteSpin Data" folder, where NoteSpin then keeps everything
+$portableZip = Join-Path $here "NoteSpin-$version-portable.zip"
+if (Test-Path $portableZip) { Remove-Item $portableZip -Force }
+Copy-Item $zip $portableZip
+$archive = [IO.Compression.ZipFile]::Open($portableZip, [IO.Compression.ZipArchiveMode]::Update)
+try { [void]$archive.CreateEntry('NoteSpin Data/') } finally { $archive.Dispose() }
+
+Write-Host ''
+foreach ($z in $zip, $portableZip) {
+    Write-Host ("Done: $z ({0:N0} KB)" -f ((Get-Item $z).Length / 1KB)) -ForegroundColor Green
+    Write-Host "SHA256: $((Get-FileHash $z -Algorithm SHA256).Hash)"
+}

@@ -43,7 +43,8 @@ namespace NoteSpin
             BackColor = Bg;
             Icon = WebAssets.AppIcon() ?? Icon;
             StartPosition = FormStartPosition.Manual;
-            MinimumSize = new Size(560, 420);
+            narrow = settings.Get("pref:hideBase") == "1";
+            FitMinimumSize();
             page = new PageHost(this, Bg);
             page.FileDropped += OnDroppedFile;
             page.BrowserExited += () =>
@@ -353,7 +354,7 @@ namespace NoteSpin
                 string initial = StartDir();
                 if (initial != null) d.InitialDirectory = initial;
                 if (d.ShowDialog(this) != DialogResult.OK) return null;
-                settings.Set("app:backupDir", Path.GetDirectoryName(d.FileName));
+                settings.SetPath("app:backupDir", Path.GetDirectoryName(d.FileName));
                 return d.FileName;
             }
         }
@@ -374,7 +375,7 @@ namespace NoteSpin
                 string initial = StartDir();
                 if (initial != null) d.InitialDirectory = initial;
                 if (d.ShowDialog(this) != DialogResult.OK) return null;
-                settings.Set("app:backupDir", Path.GetDirectoryName(d.FileName));
+                settings.SetPath("app:backupDir", Path.GetDirectoryName(d.FileName));
                 return d.FileName;
             }
         }
@@ -391,7 +392,7 @@ namespace NoteSpin
 
         string StartDir()
         {
-            foreach (string c in new[] { settings.Get("app:backupDir"), Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments) })
+            foreach (string c in new[] { settings.GetPath("app:backupDir"), Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments) })
                 if (!string.IsNullOrEmpty(c) && Directory.Exists(c)) return c;
             return null;
         }
@@ -427,6 +428,26 @@ namespace NoteSpin
         {
             base.OnHandleCreated(e);
             if (seeThrough) Native.SeeThrough(Handle, true);   // a new handle starts solid
+        }
+
+        // With the spinner base hidden (Settings) only the cards show, so the window can be narrower:
+        // down to NarrowWidth DIPs, though never wider than the usual minimum
+        const int MinWidth = 560, MinHeight = 420, NarrowWidth = 340;
+        bool narrow;
+
+        internal void SetNarrow(bool on)
+        {
+            narrow = on;
+            FitMinimumSize();
+        }
+
+        void FitMinimumSize() =>
+            MinimumSize = new Size(narrow ? Math.Min(MinWidth, (int)Math.Round(NarrowWidth * DeviceDpi / 96.0)) : MinWidth, MinHeight);
+
+        protected override void OnDpiChanged(DpiChangedEventArgs e)
+        {
+            base.OnDpiChanged(e);
+            FitMinimumSize();
         }
 
         protected override void OnResize(EventArgs e)
@@ -488,7 +509,7 @@ namespace NoteSpin
             if (p.Length < 5 || !int.TryParse(p[0], out int x) || !int.TryParse(p[1], out int y) ||
                 !int.TryParse(p[2], out int w) || !int.TryParse(p[3], out int h)) return;
             var r = new Rectangle(x, y, w, h);
-            if (w < 400 || h < 300 || !Screen.AllScreens.Any(sc => Rectangle.Intersect(sc.WorkingArea, r).Width >= 200 && Rectangle.Intersect(sc.WorkingArea, r).Height >= 100)) return;
+            if (w < Math.Min(400, MinimumSize.Width) || h < 300 || !Screen.AllScreens.Any(sc => Rectangle.Intersect(sc.WorkingArea, r).Width >= 200 && Rectangle.Intersect(sc.WorkingArea, r).Height >= 100)) return;
             Bounds = r;
             if (p[4] == "1") WindowState = FormWindowState.Maximized;
         }

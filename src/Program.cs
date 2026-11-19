@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Windows.Forms;
 
@@ -6,7 +7,10 @@ namespace NoteSpin
 {
     internal static class Program
     {
-        /// <param name="args">Optionally a .notespin file (a double-click in Explorer, or "Open with"): the page offers to import it.</param>
+        /// <param name="args">
+        /// Optionally a .notespin file (a double-click in Explorer, or "Open with"): the page offers to import it.
+        /// "--switch on|off [--bring] --after pid": NoteSpin restarting to turn portable on or off (see PortableSwitch).
+        /// </param>
         [STAThread]
         static void Main(string[] args)
         {
@@ -15,42 +19,53 @@ namespace NoteSpin
             Application.ThreadException += (s, e) =>
                 MessageBox.Show("Something went wrong:\n\n" + e.Exception.Message, "NoteSpin", MessageBoxButtons.OK, MessageBoxIcon.Error);
 
-            string file = null;
-            foreach (string a in args)
+            string file = null, switchTo = null;
+            bool bring = false;
+            int after = 0;
+            for (int i = 0; i < args.Length; i++)
             {
-                try { if (File.Exists(a)) { file = Path.GetFullPath(a); break; } }
+                string a = args[i];
+                if (a == "--switch" && i + 1 < args.Length) { switchTo = args[++i]; continue; }
+                if (a == "--after" && i + 1 < args.Length) { int.TryParse(args[++i], out after); continue; }
+                if (a == "--bring") { bring = true; continue; }
+                if (file != null) continue;
+                try { if (File.Exists(a)) file = Path.GetFullPath(a); }
                 catch { }
             }
 
-            // The app's own settings live per PC in %LOCALAPPDATA%\NoteSpin (NOTESPIN_DATA overrides it, for testing)
-            string testData = Environment.GetEnvironmentVariable("NOTESPIN_DATA");
-            string dataDir = string.IsNullOrWhiteSpace(testData)
-                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NoteSpin")
-                : testData;
-
-            // Notebooks go in Documents\NoteSpin, which OneDrive backs up when it backs up Documents. A test data
-            // folder keeps its own notebooks; NOTESPIN_NOTEBOOKS stands in for Documents\NoteSpin in tests.
-            string notebooksDir = Environment.GetEnvironmentVariable("NOTESPIN_NOTEBOOKS");
-            if (string.IsNullOrWhiteSpace(notebooksDir))
+            Dictionary<string, object> switched = null;
+            if (switchTo == "on" || switchTo == "off")
             {
-                string docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-                notebooksDir = string.IsNullOrWhiteSpace(testData) && !string.IsNullOrEmpty(docs)
-                    ? Path.Combine(docs, "NoteSpin")
-                    : Path.Combine(dataDir, "Notebooks");
+                try { switched = PortableSwitch.Run(switchTo == "on", bring, after); }
+                catch (Exception ex)
+                {
+                    MessageBox.Show((switchTo == "on" ? "NoteSpin couldn't be made portable." : "NoteSpin couldn't finish going back to this PC's storage.") +
+                        "\n\n" + ex.Message, "NoteSpin", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
             }
 
+            // Settings and the web view's files: %LOCALAPPDATA%\NoteSpin, or NoteSpin Data beside the exe when
+            // portable. Notebooks: Documents\NoteSpin (or NoteSpin Data\Notebooks), unless another folder is chosen.
+            Places.Decide();
+            string dataDir = Places.DataDir;
             Settings settings;
             Library lib;
             try
             {
                 Directory.CreateDirectory(dataDir);
                 settings = new Settings(dataDir);
-                lib = new Library(dataDir, settings, notebooksDir);
+                lib = new Library(dataDir, settings, Places.NotebooksDir);
             }
             catch (Exception ex)
             {
                 MessageBox.Show("NoteSpin couldn't open its data in\n" + dataDir + "\n\n" + ex.Message, "NoteSpin", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
+            }
+            if (switched != null)
+            {
+                // said when the page starts, along with anything the notebooks folder has to say
+                if (lib.Notice != null) foreach (var kv in lib.Notice) switched[kv.Key] = kv.Value;
+                lib.Notice = switched;
             }
             using (settings)
             using (lib)

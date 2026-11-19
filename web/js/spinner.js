@@ -17,7 +17,11 @@ const AXLE_Y = -0.15;
 const FLIP = 0.16;                  // just past the top a card falls forward
 const BEHIND = 4;                   // cards drawn behind the front one (three, and a fourth fading in)
 const FRONT = 1.9;                  // fallen cards drawn on the deck: the last one, and the one before fading out
-const PEEK = 0.38;                  // how much of each card behind shows above the one in front (its band)
+const PEEK = 0.3;                   // how much of each card behind shows above the one in front (on screen): its band...
+// ...or its band and the first line of its title: the two cards right behind (the second a little less: further
+// from the camera it looks smaller, so the same height shows more of it)
+const TITLE_PEEKS = [0.645, 0.63];
+const TITLE_BACK = 0.56;            // a card raised for its title moves back this much for each unit up
 const MIN_RING = 10;
 const POOL = 12;
 const TEX_CACHE = 22;
@@ -194,6 +198,8 @@ export class Spinner {
     this.mode = 'idle';           // idle | target (easing to a card) | free (coasting after a flick) | drag
     this.theta = 0;
     this.phi = 0.46;
+    this.baseHidden = false;      // only the cards show (setBaseHidden)
+    this.titlesBehind = true;     // the cards right behind show their titles too (see setItems)
     this.enabled = true;
     this.sound = new ClickSound();
     this.assigned = new Map();    // position → card
@@ -294,7 +300,10 @@ export class Spinner {
     const pastel = this.wheelMat = new THREE.MeshStandardMaterial({color: 0xfff2a6, roughness: 0.38, metalness: 0.08});
     this.wheelTarget = new THREE.Color(0xfff2a6);
     const rubber = new THREE.MeshStandardMaterial({color: 0x1b1d22, roughness: 0.8, metalness: 0.05});
-    const add = (m, parent = this.scene) => { m.castShadow = m.receiveShadow = true; parent.add(m); return m; };
+    // everything but the cards: hidden together when the spinner base is hidden (setBaseHidden)
+    const mount = this.mount = new THREE.Group();
+    this.scene.add(mount);
+    const add = (m, parent = mount) => { m.castShadow = m.receiveShadow = true; parent.add(m); return m; };
 
     // base tray and the deck the fallen cards rest above
     add(new THREE.Mesh(new THREE.BoxGeometry(FRAME_INNER_W + FRAME_WALL_T * 2 + 0.3, 0.26, 3.6), frameMat)).position.set(0, FLOOR + 0.13, 0.1);
@@ -331,7 +340,7 @@ export class Spinner {
     // the drum: axle, spindle discs and the two knobs (they turn with the cards)
     const rotor = this.rotor = new THREE.Group();
     rotor.position.set(0, AXLE_Y, 0);
-    this.scene.add(rotor);
+    mount.add(rotor);
     const axle = add(new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, FRAME_INNER_W + 1.35, 24), steel), rotor);
     axle.rotation.z = Math.PI / 2;
     for (const x of [-CARD_W * 0.24, CARD_W * 0.24]) {
@@ -373,16 +382,64 @@ export class Spinner {
 
   mountAt(a) { return new THREE.Vector3(0, AXLE_Y + Math.cos(a) * R, Math.sin(a) * R); }
 
+  // How far above the front card's top the top of card d behind it reaches: the strips that show of the cards
+  // up to it. The cards right behind show their band and title, the rest just the band; in between
+  // (the wheel turning) it's in between.
+  peekTo(d) {
+    let t = 0;
+    for (let k = 0; k < BEHIND; k++) t += (this.titlesBehind && k < TITLE_PEEKS.length ? TITLE_PEEKS[k] : PEEK) * clamp(d - k, 0, 1);
+    return t;
+  }
+
+  // How high a point sits on the screen, looking straight on, in units of the view at the distance the camera
+  // looks at. With the perspective: the cards behind are raised by it, so their strips show the same whether
+  // the camera is near (a wide window) or far (a narrow one).
+  screenUp(y, z) {
+    const c = Math.cos(this.phi), s = Math.sin(this.phi);
+    const dy = y - this.lookAt.y, dz = z - this.lookAt.z;
+    return (dy * c - dz * s) * this.dist / (this.dist - (dy * s + dz * c));
+  }
+
+  // How deep behind the front the card at v stands, counting only the slots with a card in them. With fewer
+  // notes than MIN_RING there's an empty stretch between the last and the first: past it, the first cards stand
+  // right behind the last, as if it weren't there (it shows as empty slots at the front as the wheel turns past).
+  // An empty slot counts for less as it nears the front, so nothing jumps as it goes by.
+  depthAt(v) {
+    const d = v - this.pos;
+    if (d <= 0 || this.N >= this.L) return d;
+    let empty = 0;
+    for (let u = Math.floor(this.pos) + 1; u < v; u++) if (mod(u, this.L) >= this.N) empty += clamp(u - this.pos, 0, 1);
+    return d - empty;
+  }
+
+  // Raised further for a title, a card also moves back: the cards lean back, so straight up its lower part
+  // would come through the face of the card in front
+  backFor(d) {
+    if (d <= 0) return 0;
+    const dd = Math.min(d, BEHIND);
+    return (this.peekTo(dd) - PEEK * dd) / Math.cos(this.phi) * TITLE_BACK;
+  }
+
   // On the drum alone the cards behind would hide completely behind the front one, so each is raised
-  // until its top band shows above the card in front of it (their lower parts stay hidden behind it).
+  // until its strip shows above the card in front of it (their lower parts stay hidden behind it).
   liftFor(d) {
     if (d <= 0) return 0;
-    const c = Math.cos(this.phi), s = Math.sin(this.phi);
-    const up = dd => {   // how high a card's top edge sits on screen, roughly
-      const a = -dd * STEP, t = this.tiltFor(a, 8), m = this.mountAt(a);
-      return (m.y + Math.cos(t) * CARD_H) * c - (m.z + Math.sin(t) * CARD_H) * s;
+    const dd = Math.min(d, BEHIND);
+    const top = (x, back) => {   // a card's top edge, as it stands on the drum
+      const a = -x * STEP, t = this.tiltFor(a, 8), m = this.mountAt(a);
+      return {y: m.y + Math.cos(t) * CARD_H, z: m.z - back + Math.sin(t) * CARD_H};
     };
-    return Math.max(0, (up(0) + PEEK * Math.min(d, BEHIND) - up(Math.min(d, BEHIND))) / c);
+    const front = top(0, 0), card = top(dd, this.backFor(dd));
+    const want = this.screenUp(front.y, front.z) + this.peekTo(dd);
+    // the height that puts its top edge there (Newton's method: it rises steadily with the height)
+    const c = Math.cos(this.phi), s = Math.sin(this.phi), D = this.dist;
+    let h = 0;
+    for (let i = 0; i < 4; i++) {
+      const dy = card.y + h - this.lookAt.y, dz = card.z - this.lookAt.z;
+      const near = D - (dy * s + dz * c), along = dy * c - dz * s;
+      h -= (along * D / near - want) / (D * (c * near + along * s) / (near * near));
+    }
+    return Math.max(0, h);
   }
 
   /** Where a card d places behind the front one (d < 0: fallen in front) stands, and how it leans. */
@@ -390,10 +447,11 @@ export class Spinner {
     const a = -d * STEP;
     const m = this.mountAt(a);
     m.y += this.liftFor(d);
+    m.z -= this.backFor(d);
     return {a, mount: m, tilt: this.tiltFor(a, v)};
   }
 
-  // Points that must stay in view: the front card, the fallen ones, the cards behind, the frame
+  // Points that must stay in view: the front card, the fallen ones, the cards behind, the frame (unless it's hidden)
   computeFitPoints() {
     const pts = [];
     const cardTop = (d, along = CARD_H) => {
@@ -403,6 +461,7 @@ export class Spinner {
     cardTop(0);
     cardTop(-1);
     cardTop(1); cardTop(2); cardTop(3);
+    if (this.baseHidden) return pts;
     const bx = FRAME_INNER_W / 2 + FRAME_WALL_T + 0.15;
     for (const x of [-bx, bx]) for (const z of [-1.7, 1.9]) pts.push(new THREE.Vector3(x, FLOOR, z));
     const kx = FRAME_INNER_W / 2 + FRAME_WALL_T + 0.45;
@@ -412,8 +471,15 @@ export class Spinner {
 
   /* ---------- items ---------- */
 
-  /** Shows these items. focusId: the item to put at the front (else the same position as before). */
-  setItems(items, focusId) {
+  /**
+   * Shows these items. focusId: the item to put at the front (else the same position as before).
+   * titlesBehind: the cards right behind the front one show their titles (else just their bands).
+   */
+  setItems(items, focusId, {titlesBehind = true} = {}) {
+    if (titlesBehind !== this.titlesBehind) {
+      this.titlesBehind = titlesBehind;
+      this.resize();
+    }
     const prevIndex = this.index();
     for (const v of [...this.assigned.keys()]) this.release(v);
     this.items = items;
@@ -569,14 +635,18 @@ export class Spinner {
       moving = true;
     } else if (this.mode === 'drag') moving = true;
 
-    // which cards are near enough the front to draw
-    const lo = Math.ceil(this.pos - FRONT), hi = Math.floor(this.pos + BEHIND);
+    // which cards are near enough the front to draw: the fallen ones, and those up to BEHIND deep (see depthAt),
+    // though not so far round that they're among the fallen ones again (a ring with very few notes)
+    const far = this.L - FRONT + 0.8;
+    const lo = Math.ceil(this.pos - FRONT);
+    let hi = Math.floor(this.pos);
+    while (hi + 1 - this.pos < far && this.depthAt(hi + 1) <= BEHIND) hi++;
     for (const v of [...this.assigned.keys()]) if (v < lo || v > hi) this.release(v);
     if (this.N) for (let v = lo; v <= hi; v++) if (mod(v, this.L) < this.N && !this.assigned.has(v)) this.acquire(v);
 
     for (const card of this.assigned.values()) {
-      const d = card.v - this.pos;
-      const {a, mount, tilt: want} = this.place(d, card.v);
+      const d = card.v - this.pos, depth = this.depthAt(card.v);
+      const {a, mount, tilt: want} = this.place(depth, card.v);
       const flipped = a > FLIP;
       if (card.fresh) {
         card.tilt = want;
@@ -596,7 +666,10 @@ export class Spinner {
       }
       card.group.position.copy(mount);
       card.hinge.rotation.x = card.tilt;
-      const op = d > BEHIND - 1 ? clamp(BEHIND - d, 0, 1) : d < -(FRONT - 0.8) ? clamp((d + FRONT) / 0.8, 0, 1) : 1;
+      // fading in at the back, out after falling; and a card that's also lying among the fallen ones (a ring of
+      // very few notes) fades in as that one fades out
+      const op = Math.min(depth > BEHIND - 1 ? clamp(BEHIND - depth, 0, 1) : d < -(FRONT - 0.8) ? clamp((d + FRONT) / 0.8, 0, 1) : 1,
+        clamp((far - d) / 0.8, 0, 1));
       for (const mat of card.mats) mat.opacity = op;
       card.mesh.castShadow = op > 0.5;
     }
@@ -634,6 +707,17 @@ export class Spinner {
     this.wake();
   }
 
+  /**
+   * The spinner base hidden (Settings): the frame, knobs, axle and stand go, and their shadows with them.
+   * The cards move as before; the view is framed around them alone (so it can be narrower) and stays straight on.
+   */
+  setBaseHidden(hidden) {
+    this.baseHidden = hidden;
+    this.mount.visible = !hidden;
+    if (hidden) this.theta = 0;
+    this.resize();
+  }
+
   wake() {
     this.idle = 0;
     if (!this.raf) this.raf = requestAnimationFrame(t => this.frame(t));
@@ -655,7 +739,12 @@ export class Spinner {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.setSize(w, h);
     this.camera.aspect = w / h;
-    this.fit();
+    // the cards behind are raised for the camera's distance, and the distance is found for the cards: a few
+    // rounds settle both
+    for (let i = 0; i < 3; i++) {
+      this.fitPoints = this.computeFitPoints();
+      this.fit();
+    }
     this.placeCamera();
     this.wake();
   }
@@ -734,7 +823,7 @@ export class Spinner {
 
   setSound(on) { this.sound.on = on; }
 
-  /* ---------- input: drag up/down to turn, sideways to look around, tap a card, mouse wheel ---------- */
+  /* ---------- input: drag up/down to turn, sideways to look around (not with the base hidden), tap a card, mouse wheel ---------- */
 
   initInput() {
     const el = this.renderer.domElement;
@@ -791,7 +880,7 @@ export class Spinner {
         g.samples.push({t, pos: this.pos});
         while (g.samples.length > 2 && t - g.samples[0].t > 90) g.samples.shift();
         this.wake();
-      } else if (g.axis === 'look') {
+      } else if (g.axis === 'look' && !this.baseHidden) {   // with the base hidden, sideways does nothing
         this.theta = clamp(this.theta - dx * 0.0065, -0.85, 0.85);
         this.placeCamera();
         this.wake();
