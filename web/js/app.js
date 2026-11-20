@@ -534,7 +534,7 @@ function notebookMenu() {
     '-',
     {label: 'Export a backup…', hint: '.notespin', onClick: exportBackup},
     {label: 'Import a backup…', onClick: importBackup},
-    {label: 'Import from Sticky Notes…', onClick: importStickyNotes},
+    ...(isLinux ? [] : [{label: 'Import from Sticky Notes…', onClick: importStickyNotes}]),
     '-',
     {label: 'Open the notebooks folder', onClick: () => NS.call('ShowFolder', 'notebooks')},
   ]);
@@ -913,17 +913,25 @@ async function manageCategories() {
 
 /* ---------- settings ---------- */
 
-// portable: the NoteSpin Data folder beside NoteSpin.exe, where everything is kept (null when it isn't portable)
+// portable: the NoteSpin Data folder beside the executable, where everything is kept (null when it isn't portable)
 let portableDir = null;
-const inFolder = (p, dir) => !!dir && (p || '').toLowerCase().startsWith(dir.toLowerCase().replace(/\\?$/, '\\'));
+let isLinux = false;
+const normDir = d => (d || '').replace(/[\\/]+$/, '');
+const inFolder = (p, dir) => {
+  if (!dir || !p) return false;
+  const a = isLinux ? p : p.toLowerCase(), b = isLinux ? normDir(dir) : normDir(dir).toLowerCase();
+  return a === b || a.startsWith(b + '/') || a.startsWith(b + '\\');
+};
 
 const folderNote = dir => inFolder(dir, portableDir)
   ? 'In NoteSpin\'s own folder, so the notebooks go wherever the NoteSpin folder goes. Keep backups somewhere else too: a USB drive is easy to lose.'
+  : isLinux
+  ? 'Stored in this folder on this PC (and wherever else you keep backups or sync this folder).'
   : inOneDrive(dir)
   ? 'In OneDrive, so your notebooks are backed up to the cloud. Use NoteSpin on one PC at a time: OneDrive can\'t merge a notebook changed in two places.'
   : 'Not in a OneDrive folder, so the notebooks are only on this PC (and wherever else you keep backups).';
 
-/* ---------- portable: everything kept beside NoteSpin.exe (Settings) ---------- */
+/* ---------- portable: everything kept beside NoteSpin (Settings) ---------- */
 
 // Turning it on or off restarts NoteSpin, which moves things over on the way (PortableSwitch in the C# side)
 async function switchPortable(on, bring) {
@@ -936,15 +944,16 @@ async function switchPortable(on, bring) {
 
 async function makePortable(info) {
   const n = state.notebooks.length;
+  const exeName = isLinux ? 'NoteSpin' : 'NoteSpin.exe';
+  const runtimeHint = isLinux ? '' : ' The PC needs the WebView2 Runtime, which comes with Windows 11.';
   const choice = await dialog({
     title: 'Make NoteSpin portable?',
     wide: true,
-    html: `<p>NoteSpin will keep its settings and notebooks in this folder, beside NoteSpin.exe, and restart:</p>
+    html: `<p>NoteSpin will keep its settings and notebooks in this folder, beside ${exeName}, and restart:</p>
       <p class="lead path">${esc(info.portableDir)}</p>
       <p>Copy your ${plural(n, 'notebook')} there? The ones on this PC stay as they are.</p>
       <p class="hint">To take NoteSpin and your notes to another PC, copy the whole NoteSpin folder to a USB drive and
-      run it from there. The PC needs the WebView2 Runtime, which comes with Windows 11. Close NoteSpin before
-      unplugging the drive.</p>`,
+      run it from there.${runtimeHint} Close NoteSpin before unplugging the drive.</p>`,
     buttons: [
       {label: 'Cancel', value: null, left: true},
       {label: 'Start empty', value: 'empty'},
@@ -984,7 +993,8 @@ const PORTABLE_NAME = 'NoteSpin Data';
 async function changeNotebooksFolder() {
   const dir = await NS.folderDialog();
   if (!dir) return null;
-  if (dir.toLowerCase() === (state.dir || '').toLowerCase()) { toast('That\'s the folder already in use.'); return null; }
+  const sameDir = isLinux ? normDir(dir) === normDir(state.dir) : normDir(dir).toLowerCase() === normDir(state.dir).toLowerCase();
+  if (sameDir) { toast('That\'s the folder already in use.'); return null; }
   const n = state.notebooks.length;
   const choice = await dialog({
     title: 'Use this folder for notebooks?',
@@ -1031,7 +1041,7 @@ async function showSettings() {
       <p class="hint">Copy or move the whole NoteSpin folder, ${esc(PORTABLE_NAME)} and all, and your notes go with it:
       to a USB drive, say, to use NoteSpin on any PC.</p>
       <div class="row-btns"><button class="btn" type="button" id="portableBtn">Keep everything on this PC…</button></div>`
-      : `<p class="hint">Keep NoteSpin's settings and notebooks in its own folder, beside NoteSpin.exe, so the whole
+      : `<p class="hint">Keep NoteSpin's settings and notebooks in its own folder, beside ${isLinux ? 'NoteSpin' : 'NoteSpin.exe'}, so the whole
       NoteSpin folder can go on a USB drive and run on any PC, with your notes.</p>
       <div class="row-btns"><button class="btn" type="button" id="portableBtn">Make portable…</button></div>`}
       <h3>Notes</h3>
@@ -1050,12 +1060,12 @@ async function showSettings() {
         <output id="seeLevelText">${seeThroughLevel()}%</output></div>
       <p class="hint">The desktop, and any window behind NoteSpin, shows through the space around the cards. The higher
       the opacity, the darker and more solid that space is. The panel, the cards and open notes stay solid.</p>
-      <h3>Microsoft Sticky Notes</h3>
+      ${isLinux ? '' : `<h3>Microsoft Sticky Notes</h3>
       <p class="hint">Copy notes from the Sticky Notes app into this notebook, picking which ones. Sticky Notes isn't changed.</p>
-      <div class="row-btns" style="margin-bottom:4px"><button class="btn" type="button" id="stickyBtn">Import from Sticky Notes…</button></div>
+      <div class="row-btns" style="margin-bottom:4px"><button class="btn" type="button" id="stickyBtn">Import from Sticky Notes…</button></div>`}
       <h3>Opening backups</h3>
-      <p>Open <strong>.notespin</strong> files with NoteSpin when they're double-clicked in File Explorer.</p>
-      ${info.portable && !info.fileAssoc ? `<p class="hint">Not while NoteSpin is portable: a USB drive's letter
+      <p>Open <strong>.notespin</strong> files with NoteSpin when they're double-clicked in ${isLinux ? 'your file manager' : 'File Explorer'}.</p>
+      ${info.portable && !info.fileAssoc ? `<p class="hint">Not while NoteSpin is portable: a USB drive's ${isLinux ? 'mount path' : 'letter'}
       changes from PC to PC.</p>` : `<div class="row-btns"><button class="btn" type="button" id="assocBtn">${assocLabel(info.fileAssoc)}</button>
         <span class="hint" id="assocState" style="align-self:center">${info.fileAssoc ? 'On for this copy of NoteSpin.' : 'Off.'}</span></div>`}
       <h3>Keyboard</h3>
@@ -1082,7 +1092,7 @@ async function showSettings() {
         } catch (err) { alertDlg('Couldn\'t change it', err.message); }
       });
       box.querySelector('#ownWindow').addEventListener('change', e => NS.prefSet('noteWindow', e.target.checked ? '1' : '0'));
-      box.querySelector('#stickyBtn').addEventListener('click', importStickyNotes);
+      box.querySelector('#stickyBtn')?.addEventListener('click', importStickyNotes);
       box.querySelector('#hideBase').addEventListener('change', e => {
         setBaseHidden(e.target.checked);
         NS.prefSet('hideBase', e.target.checked ? '1' : '0');
@@ -1090,7 +1100,7 @@ async function showSettings() {
       const seeBox = box.querySelector('#seeThrough'), seeLevel = box.querySelector('#seeLevel'), seeRow = box.querySelector('#seeRow');
       seeBox.addEventListener('change', async () => {
         const ok = await setSeeThrough(seeBox.checked, +seeLevel.value);
-        if (seeBox.checked && !ok) { seeBox.checked = false; toast("Windows didn't let the window go see-through."); }
+        if (seeBox.checked && !ok) { seeBox.checked = false; toast(isLinux ? "Your desktop didn't let the window go see-through." : "Windows didn't let the window go see-through."); }
         NS.prefSet('seeThrough', ok ? '1' : '0');
         seeLevel.disabled = !ok;
         seeRow.classList.toggle('off', !ok);
@@ -1199,6 +1209,43 @@ function wire() {
   document.addEventListener('keydown', onKey);
   // a .notespin file dropped on the window is offered as a backup to import
   NS.on('importFile', m => importFile(m.path));
+  // Linux GTK drag-and-drop fallback (handles .notespin and .txt drops when WebKit doesn't expose HTML5 File objects)
+  let lastDropAt = 0;
+  async function handleDroppedPaths(paths) {
+    if (!Array.isArray(paths) || !paths.length) return;
+    if (Date.now() - lastDropAt < 400) return;
+    lastDropAt = Date.now();
+    if (editor.isOpen || dialogOpen()) return;
+    const backup = paths.find(p => /\.notespin$/i.test(p));
+    if (backup) { importFile(backup); return; }
+    const texts = paths.filter(p => /\.txt$/i.test(p));
+    if (!texts.length) {
+      toast('Only NoteSpin backups (.notespin) and text files (.txt) can be dropped here.');
+      return;
+    }
+    const files = [];
+    for (const p of texts) {
+      try {
+        const d = await NS.call('ReadTextDrop', p);
+        files.push({
+          name: d.name,
+          size: d.size,
+          async arrayBuffer() {
+            if (d.tooBig || !d.base64) return new ArrayBuffer(0);
+            const bin = atob(d.base64);
+            const u8 = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+            return u8.buffer;
+          },
+        });
+      } catch {
+        const name = p.split(/[\\/]/).pop() || p;
+        files.push({name, size: 0, async arrayBuffer() { throw new Error('unreadable'); }});
+      }
+    }
+    notesFromTextFiles(files);
+  }
+  NS.on('droppedFiles', m => handleDroppedPaths(m.paths).catch(() => {}));
   // from the note window
   NS.on('noteSaved', refreshSoon);
   NS.on('categoriesChanged', refreshSoon);
@@ -1206,7 +1253,10 @@ function wire() {
   NS.on('dockIn', m => dockIn(m.state).catch(e => toast('Couldn\'t bring the note back: ' + e.message, {kind: 'error'})));
   window.__nsDockHover = dockHover;
   window.__nsDockDrop = (x, y) => { const hit = dockHover(x, y); hideDropZone(); return hit; };
-  const hasFiles = e => [...(e.dataTransfer?.types || [])].includes('Files');
+  const hasFiles = e => {
+    const t = [...(e.dataTransfer?.types || [])];
+    return t.includes('Files') || (isLinux && t.includes('text/uri-list'));
+  };
   addEventListener('dragover', e => { if (hasFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = editor.isOpen ? 'none' : 'copy'; } });
   addEventListener('drop', async e => {
     if (!hasFiles(e)) return;
@@ -1214,6 +1264,8 @@ function wire() {
     if (editor.isOpen || dialogOpen()) return;
     // a NoteSpin backup is offered for importing; text files become notes
     const files = [...e.dataTransfer.files];
+    if (!files.length) return;   // on Linux WebKitGTK, GTK's droppedFiles handler takes over when dataTransfer.files is empty
+    lastDropAt = Date.now();
     const backup = files.find(f => /\.notespin$/i.test(f.name)), texts = files.filter(f => /\.txt$/i.test(f.name));
     if (!backup) {
       if (texts.length) notesFromTextFiles(texts);
@@ -1280,7 +1332,10 @@ async function start() {
   } catch (e) {
     alertDlg('NoteSpin couldn\'t read the notebook', e.message);
   }
-  NS.call('AppInfo').then(i => { portableDir = i.portable ? i.portableDir : null; }).catch(() => {});
+  NS.call('AppInfo').then(i => {
+    portableDir = i.portable ? i.portableDir : null;
+    isLinux = i.platform === 'linux';
+  }).catch(() => {});
   // notebooks moved to the notebooks folder, or a chosen folder that isn't there; portable turned on or off
   const notice = await NS.call('TakeNotice').catch(() => null);
   if (notice?.switched) switchedNotice(notice);

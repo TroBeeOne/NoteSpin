@@ -1,8 +1,9 @@
-# Build output - recreate with .\build.ps1
+# Build output - recreate with .\build.ps1 (Windows) or ./build.sh (Linux)
 bin/
 obj/
 dist/
 NoteSpin-*.zip
+NoteSpin-*.tar.gz
 
 # NuGet
 packages/

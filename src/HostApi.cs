@@ -5,27 +5,36 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
-using System.Web.Script.Serialization;
+#if !LINUX
 using System.Windows.Forms;
+#endif
 
 namespace NoteSpin
 {
     /// <summary>
-    /// The object the page reaches as chrome.webview.hostObjects.ns (see web\js\host.js).
+    /// The object the page reaches via window.NS (see web/js/host.js).
     /// Every method returns JSON; a failure comes back as {"__error": message} and host.js turns it into
     /// a rejected promise. Only the app's own pages can load in its windows (PageHost blocks every other
     /// address), so only they can call these. Each page has its own: the main page's has no note window
     /// (noteWin null), a note page's is given the window it's in.
     /// </summary>
+#if !LINUX
     [ComVisible(true)]
     [ClassInterface(ClassInterfaceType.AutoDual)]
+#endif
     public class HostApi
     {
+        internal sealed class JsonCompat
+        {
+            public string Serialize(object value) => JsonCodec.Serialize(value);
+            public object DeserializeObject(string json) => JsonCodec.Deserialize(json);
+        }
+
         readonly MainForm form;
         readonly Settings settings;
         readonly Library lib;
         readonly NoteWindow noteWin;
-        internal static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
+        internal static readonly JsonCompat Json = new JsonCompat();
 
         internal HostApi(MainForm form, Settings settings, Library lib, NoteWindow noteWin)
         {
@@ -53,6 +62,13 @@ namespace NoteSpin
         public string AppInfo() => Do(() => new Dictionary<string, object>
         {
             ["version"] = typeof(HostApi).Assembly.GetName().Version.ToString(3),
+#if LINUX
+            ["platform"] = "linux",
+            ["wayland"] = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WAYLAND_DISPLAY")),
+#else
+            ["platform"] = "windows",
+            ["wayland"] = false,
+#endif
             ["dataDir"] = form.DataDir,
             ["notebooksDir"] = lib.NotebooksDir,
             ["defaultDir"] = lib.DefaultDir,
@@ -107,7 +123,13 @@ namespace NoteSpin
         {
             string dir = which == "safety" ? lib.SafetyDir : lib.NotebooksDir;
             Directory.CreateDirectory(dir);
+#if LINUX
+            var psi = new ProcessStartInfo("xdg-open") { UseShellExecute = false };
+            psi.ArgumentList.Add(dir);
+            Process.Start(psi);
+#else
             Process.Start("explorer.exe", "\"" + dir + "\"");
+#endif
         });
 
         /* ---------- notebooks ---------- */
@@ -123,7 +145,7 @@ namespace NoteSpin
         {
             var info = Notebook.Inspect(path);
             info["inLibrary"] = lib.InLibrary(path);
-            info["isCurrent"] = string.Equals(Path.GetFullPath(path), lib.Current.FilePath, StringComparison.OrdinalIgnoreCase);
+            info["isCurrent"] = string.Equals(Path.GetFullPath(path), lib.Current.FilePath, Places.PathComparison);
             return info;
         });
 
@@ -203,7 +225,11 @@ namespace NoteSpin
         }
 
         void Failed(Exception ex) =>
+#if LINUX
+            form.ShowError("The note window couldn't open.\n\n" + ex.Message);
+#else
             MessageBox.Show(form, "The note window couldn't open.\n\n" + ex.Message, "NoteSpin", MessageBoxButtons.OK, MessageBoxIcon.Error);
+#endif
 
         /// <summary>The note windows with a note in them: [{win, id}] (id null for a new note not saved yet).</summary>
         public string NoteWinState() => Do(() =>
@@ -320,5 +346,87 @@ namespace NoteSpin
             if (m.TryGetValue("type", out object t) && t as string == "categoriesChanged")
                 form.SendToNotes(new Dictionary<string, object> { ["type"] = "categoriesChanged" }, w);
         });
+
+#if LINUX
+        /* ---------- Linux WebKitGTK message dispatch ---------- */
+
+        static string StrArg(IList<object> a, int i) => i < a.Count && a[i] != null ? Convert.ToString(a[i]) : null;
+        static bool BoolArg(IList<object> a, int i) => i < a.Count && a[i] != null && Convert.ToBoolean(a[i]);
+        static double DblArg(IList<object> a, int i) => i < a.Count && a[i] != null ? Convert.ToDouble(a[i]) : 0;
+
+        internal bool TryDispatch(string method, IList<object> a, out string resultJson)
+        {
+            resultJson = null;
+            switch (method)
+            {
+                case "AppInfo": resultJson = AppInfo(); return true;
+                case "PortableSet": resultJson = PortableSet(BoolArg(a, 0), BoolArg(a, 1)); return true;
+                case "PrefGet": resultJson = PrefGet(StrArg(a, 0)); return true;
+                case "PrefSet": resultJson = PrefSet(StrArg(a, 0), StrArg(a, 1)); return true;
+                case "TakeStartupFile": resultJson = TakeStartupFile(); return true;
+                case "FileAssocSet": resultJson = FileAssocSet(BoolArg(a, 0)); return true;
+                case "ShowLicenses": resultJson = ShowLicenses(); return true;
+                case "SeeThroughSet": resultJson = SeeThroughSet(BoolArg(a, 0)); return true;
+                case "BaseHiddenSet": resultJson = BaseHiddenSet(BoolArg(a, 0)); return true;
+                case "ShowFolder": resultJson = ShowFolder(StrArg(a, 0)); return true;
+                case "NbState": resultJson = NbState(); return true;
+                case "NbOpen": resultJson = NbOpen(StrArg(a, 0)); return true;
+                case "NbCreate": resultJson = NbCreate(StrArg(a, 0)); return true;
+                case "NbRename": resultJson = NbRename(StrArg(a, 0)); return true;
+                case "NbDelete": resultJson = NbDelete(StrArg(a, 0)); return true;
+                case "NbInspect": resultJson = NbInspect(StrArg(a, 0)); return true;
+                case "NbImportAsNew": resultJson = NbImportAsNew(StrArg(a, 0)); return true;
+                case "NbReplaceCurrent": resultJson = NbReplaceCurrent(StrArg(a, 0)); return true;
+                case "NbExportDialog": NbExportDialog(StrArg(a, 0)); return false;
+                case "NbImportDialog": NbImportDialog(StrArg(a, 0)); return false;
+                case "NbFolderDialog": NbFolderDialog(StrArg(a, 0)); return false;
+                case "NbSetFolder": resultJson = NbSetFolder(StrArg(a, 0), BoolArg(a, 1)); return true;
+                case "TakeNotice": resultJson = TakeNotice(); return true;
+                case "NotesAll": resultJson = NotesAll(); return true;
+                case "NoteGet": resultJson = NoteGet(StrArg(a, 0)); return true;
+                case "NoteSave": resultJson = NoteSave(StrArg(a, 0)); return true;
+                case "NoteDelete": resultJson = NoteDelete(StrArg(a, 0)); return true;
+                case "NotesSearch": resultJson = NotesSearch(StrArg(a, 0)); return true;
+                case "StickyNotesRead": resultJson = StickyNotesRead(); return true;
+                case "StickyNotesCopy": resultJson = StickyNotesCopy(StrArg(a, 0)); return true;
+                case "CategoriesAll": resultJson = CategoriesAll(); return true;
+                case "CategorySave": resultJson = CategorySave(StrArg(a, 0), StrArg(a, 1), StrArg(a, 2)); return true;
+                case "CategoryDelete": resultJson = CategoryDelete(StrArg(a, 0)); return true;
+                case "NoteWinState": resultJson = NoteWinState(); return true;
+                case "NoteWinOpen": resultJson = NoteWinOpen(StrArg(a, 0), BoolArg(a, 1)); return true;
+                case "NoteWinPopOut": resultJson = NoteWinPopOut(StrArg(a, 0), BoolArg(a, 1), DblArg(a, 2), DblArg(a, 3), StrArg(a, 4)); return true;
+                case "NoteWinFollowEnd": resultJson = NoteWinFollowEnd(); return true;
+                case "NoteWinClose": NoteWinClose(StrArg(a, 0), StrArg(a, 1)); return false;
+                case "NoteWinFocus": resultJson = NoteWinFocus(StrArg(a, 0)); return true;
+                case "TakeNoteWindowNotes": resultJson = TakeNoteWindowNotes(); return true;
+                case "ToNote": resultJson = ToNote(StrArg(a, 0)); return true;
+                case "NoteWinReady": resultJson = NoteWinReady(); return true;
+                case "NoteWinSetState": resultJson = NoteWinSetState(StrArg(a, 0)); return true;
+                case "NoteWinHide": resultJson = NoteWinHide(); return true;
+                case "NoteWinDrag": resultJson = NoteWinDrag(StrArg(a, 0)); return true;
+                case "NoteWinPin": resultJson = NoteWinPin(BoolArg(a, 0)); return true;
+                case "NoteWinDock": resultJson = NoteWinDock(StrArg(a, 0)); return true;
+                case "NoteWinNew": resultJson = NoteWinNew(StrArg(a, 0)); return true;
+                case "ToMain": resultJson = ToMain(StrArg(a, 0)); return true;
+                case "DroppedFilePath": resultJson = Do(() => form.TakeDroppedFilePath(StrArg(a, 0))); return true;
+                case "ReadTextDrop": resultJson = Do(() => ReadTextDrop(StrArg(a, 0))); return true;
+                default:
+                    resultJson = J(new Dictionary<string, object> { ["__error"] = "Unknown host method: " + method });
+                    return true;
+            }
+        }
+
+        static Dictionary<string, object> ReadTextDrop(string path)
+        {
+            if (string.IsNullOrEmpty(path) || !File.Exists(path))
+                throw new FileNotFoundException("That file wasn't found.");
+            var fi = new FileInfo(path);
+            const long maxBytes = 1024 * 1024;
+            if (fi.Length > maxBytes)
+                return new Dictionary<string, object> { ["name"] = fi.Name, ["size"] = fi.Length, ["tooBig"] = true };
+            byte[] bytes = File.ReadAllBytes(path);
+            return new Dictionary<string, object> { ["name"] = fi.Name, ["size"] = (long)bytes.Length, ["base64"] = Convert.ToBase64String(bytes) };
+        }
+#endif
     }
 }

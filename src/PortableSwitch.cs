@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
+#if !LINUX
 using System.Windows.Forms;
+#endif
 
 namespace NoteSpin
 {
@@ -27,7 +29,12 @@ namespace NoteSpin
         public static void Start(bool portable, bool bring)
         {
             string args = $"--switch {(portable ? "on" : "off")}{(bring ? " --bring" : "")} --after {Process.GetCurrentProcess().Id}";
+#if LINUX
+            string exe = Environment.ProcessPath ?? Path.Combine(Places.ExeDir, "NoteSpin");
+            Process.Start(new ProcessStartInfo(exe, args) { UseShellExecute = false });
+#else
             Process.Start(new ProcessStartInfo(Application.ExecutablePath, args) { UseShellExecute = false });
+#endif
         }
 
         /// <summary>Throws, saying why, when NoteSpin can't keep its data in its own folder.</summary>
@@ -177,7 +184,7 @@ namespace NoteSpin
         static bool Same(string a, string b)
         {
             if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return false;
-            try { return string.Equals(Path.GetFullPath(a).TrimEnd('\\'), Path.GetFullPath(b).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase); }
+            try { return string.Equals(Places.NoEndSlash(Path.GetFullPath(a)), Places.NoEndSlash(Path.GetFullPath(b)), Places.PathComparison); }
             catch { return false; }
         }
 
@@ -186,8 +193,8 @@ namespace NoteSpin
         {
             if (string.IsNullOrEmpty(path)) return null;
             if (Same(path, from)) return to;
-            string prefix = from.TrimEnd('\\') + "\\";
-            return path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ? Path.Combine(to, path.Substring(prefix.Length)) : path;
+            string prefix = Places.NoEndSlash(from) + Path.DirectorySeparatorChar;
+            return path.StartsWith(prefix, Places.PathComparison) ? Path.Combine(to, path.Substring(prefix.Length)) : path;
         }
 
         // settings.db, with its write-ahead log if it has one (NoteSpin was closed, so there's normally none)

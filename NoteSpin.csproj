@@ -1,41 +1,56 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- .NET Framework 4.8 is built into Windows 10/11, so the app needs nothing installed.
-       The pages in web\ are compiled into the exe and served to WebView2 from memory. -->
+  <!-- Windows: .NET Framework 4.8 is built into Windows 10/11, so the app needs nothing installed.
+       Linux: .NET 10 + system GTK3 / WebKit2GTK-4.1 / libsqlite3 (no extra NuGet packages).
+       The pages in web/ are compiled into the binary and served from memory. -->
   <PropertyGroup>
-    <OutputType>WinExe</OutputType>
-    <TargetFramework>net48</TargetFramework>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
-    <PlatformTarget>x64</PlatformTarget>
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <AssemblyName>NoteSpin</AssemblyName>
     <RootNamespace>NoteSpin</RootNamespace>
-    <ApplicationIcon>favicon.ico</ApplicationIcon>
-    <ApplicationManifest>app.manifest</ApplicationManifest>
     <Version>1.4.0</Version>
     <Product>NoteSpin</Product>
     <AssemblyTitle>NoteSpin</AssemblyTitle>
     <Description>Sticky notes on a spinning card wheel</Description>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <DefaultItemExcludes>$(DefaultItemExcludes);dist/**;CONTEXT/**;tools/**</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <ApplicationIcon>favicon.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
-    <DefaultItemExcludes>$(DefaultItemExcludes);dist\**;CONTEXT\**;tools\**</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="!$([MSBuild]::IsOSPlatform('Windows'))">
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <DefineConstants>$(DefineConstants);LINUX</DefineConstants>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <DebugType>none</DebugType>
   </PropertyGroup>
 
-  <ItemGroup>
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
     <Reference Include="System.Drawing" />
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Web.Extensions" />
     <Reference Include="Microsoft.VisualBasic" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
+    <Compile Remove="src/linux/**" />
+  </ItemGroup>
+
+  <ItemGroup Condition="!$([MSBuild]::IsOSPlatform('Windows'))">
+    <Compile Remove="src/MainForm.cs;src/NoteWindow.cs;src/PageHost.cs;src/Native.cs;src/FolderPicker.cs;src/FileAssoc.cs;src/Program.cs" />
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="web\**\*" Exclude="web\**\*.md" LogicalName="web/%(RecursiveDir)%(Filename)%(Extension)" />
+    <EmbeddedResource Include="web/**/*" Exclude="web/**/*.md" LogicalName="web/%(RecursiveDir)%(Filename)%(Extension)" />
     <EmbeddedResource Include="favicon.ico" LogicalName="favicon.ico" />
     <None Update="LICENSES.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

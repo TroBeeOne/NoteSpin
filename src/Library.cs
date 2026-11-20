@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
+#if !LINUX
 using Microsoft.VisualBasic.FileIO;
+#endif
 
 namespace NoteSpin
 {
@@ -104,7 +107,7 @@ namespace NoteSpin
         {
             dir = Path.GetFullPath(dir);
             if (SamePath(dir, NotebooksDir)) return;
-            if (SamePath(dir, SafetyDir) || dir.StartsWith(SafetyDir.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase))
+            if (SamePath(dir, SafetyDir) || dir.StartsWith(Places.NoEndSlash(SafetyDir) + Path.DirectorySeparatorChar, Places.PathComparison))
                 throw new InvalidOperationException("Choose a folder outside Safety Backups.");
             Directory.CreateDirectory(dir);
             string oldDir = NotebooksDir, oldSafety = SafetyDir, current = Current.FilePath, currentNew = null;
@@ -165,9 +168,9 @@ namespace NoteSpin
         }
 
         public bool InLibrary(string path) =>
-            string.Equals(Path.GetDirectoryName(Path.GetFullPath(path)).TrimEnd('\\'), NotebooksDir.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase);
+            string.Equals(Places.NoEndSlash(Path.GetDirectoryName(Path.GetFullPath(path))), Places.NoEndSlash(NotebooksDir), Places.PathComparison);
 
-        static bool SamePath(string a, string b) => string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase);
+        static bool SamePath(string a, string b) => string.Equals(Places.NoEndSlash(Path.GetFullPath(a)), Places.NoEndSlash(Path.GetFullPath(b)), Places.PathComparison);
 
         /// <summary>The open notebook and every notebook in the folder.</summary>
         public Dictionary<string, object> State()
@@ -260,7 +263,7 @@ namespace NoteSpin
                 Current.Dispose();
                 Current = null;
             }
-            try { FileSystem.DeleteFile(path, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin); }
+            try { MoveToTrash(path); }
             catch (Exception)
             {
                 if (current) Switch(path);
@@ -346,6 +349,30 @@ namespace NoteSpin
                     f.Delete();
             }
             catch { }
+        }
+
+        static void MoveToTrash(string path)
+        {
+#if LINUX
+            try
+            {
+                var psi = new ProcessStartInfo("gio") { UseShellExecute = false, RedirectStandardError = true };
+                psi.ArgumentList.Add("trash");
+                psi.ArgumentList.Add(path);
+                using (var p = Process.Start(psi))
+                {
+                    if (p != null)
+                    {
+                        p.WaitForExit(10000);
+                        if (p.ExitCode == 0 && !File.Exists(path)) return;
+                    }
+                }
+            }
+            catch { }
+            File.Delete(path);
+#else
+            FileSystem.DeleteFile(path, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin);
+#endif
         }
     }
 }

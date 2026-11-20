@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 
 namespace NoteSpin
@@ -25,6 +26,16 @@ namespace NoteSpin
             db.Exec("INSERT INTO kv(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", key, value ?? "");
 
         public void Remove(string key) => db.Exec("DELETE FROM kv WHERE key=?", key);
+
+        public Dictionary<string, string> GetAllPrefs()
+        {
+            var map = new Dictionary<string, string>();
+            foreach (var row in db.Query("SELECT key, value FROM kv WHERE substr(key,1,5)='pref:'"))
+            {
+                if (row[0] is string k && k.Length > 5) map[k.Substring(5)] = row[1] as string;
+            }
+            return map;
+        }
 
         /// <summary>A file or folder kept in the settings. Portable, one on NoteSpin's own drive is kept relative to its folder (see Places).</summary>
         public string GetPath(string key) => Places.Unpack(Get(key));

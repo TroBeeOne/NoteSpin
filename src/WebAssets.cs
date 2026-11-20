@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+#if !LINUX
 using System.Drawing;
+#endif
 using System.IO;
 using System.Reflection;
 
@@ -34,10 +36,12 @@ namespace NoteSpin
             }
         }
 
+#if !LINUX
         public static Icon AppIcon()
         {
             using (var s = Asm.GetManifestResourceStream("favicon.ico")) return s == null ? null : new Icon(s);
         }
+#endif
 
         public static byte[] Favicon()
         {

@@ -26,7 +26,11 @@ namespace NoteSpin
         // NOTESPIN_STICKYNOTES=<folder with a plum.sqlite> stands in for Sticky Notes' own folder, for testing
         public static string Folder =>
             Environment.GetEnvironmentVariable("NOTESPIN_STICKYNOTES") is string test && test.Length > 0 ? test
+#if LINUX
+                : null;
+#else
                 : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Packages", Package, "LocalState");
+#endif
 
         /// <summary>
         /// The notes with text in them, last edited first: [{sid, lines, theme, created, updated}] (dates in ms
@@ -34,7 +38,7 @@ namespace NoteSpin
         /// </summary>
         public static List<Dictionary<string, object>> Read()
         {
-            if (!File.Exists(Path.Combine(Folder, DbFile))) return null;
+            if (string.IsNullOrEmpty(Folder) || !File.Exists(Path.Combine(Folder, DbFile))) return null;
             Exception last = null;
             // Sticky Notes may write while the files are copied; a copy caught half-way is made again
             for (int attempt = 0; attempt < 3; attempt++)

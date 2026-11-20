@@ -1,11 +1,12 @@
 # NoteSpin
 
-Sticky notes on a spinning 3D card wheel, for Windows. Each note is a pastel card in the colour of its
+Sticky notes on a spinning 3D card wheel, for Windows and Linux. Each note is a pastel card in the colour of its
 category; turn the wheel to flip through them, click the front card to open it.
 
-Nothing needs installing: copy the `NoteSpin` folder anywhere and run `NoteSpin.exe`. It can also be made
+On Windows, nothing needs installing: copy the `NoteSpin` folder anywhere and run `NoteSpin.exe`. On Linux, extract
+the tarball and run `./NoteSpin` (uses the .NET 10 runtime and system GTK3 / WebKit2GTK-4.1 / SQLite). It can also be made
 [portable](#portable-notespin-on-a-usb-drive), keeping your notes in its own folder so it runs from a USB drive
-on any PC. It runs on .NET Framework 4.8 and the Microsoft Edge WebView2 Runtime, both part of Windows 10 and 11.
+on any PC. Notebook files (`.notespin`) are standard SQLite databases and work identically on both Windows and Linux.
 
 - [Getting started](#getting-started)
 - [The wheel](#the-wheel)
@@ -17,6 +18,7 @@ on any PC. It runs on .NET Framework 4.8 and the Microsoft Edge WebView2 Runtime
 - [Notebooks, folders and backups](#notebooks-folders-and-backups)
 - [Portable: NoteSpin on a USB drive](#portable-notespin-on-a-usb-drive)
 - [Copying notes from Sticky Notes](#copying-notes-from-sticky-notes)
+- [Linux](#linux)
 - [Keyboard, mouse and touch](#keyboard-mouse-and-touch)
 - [Questions](#questions)
 - [Building and changing NoteSpin](#building-and-changing-notespin)
@@ -255,6 +257,30 @@ Notes from **Microsoft Sticky Notes** (the app that comes with Windows) can be c
 - **Running it again**: notes copied into this notebook before are marked *Copied before* and start unticked,
   so nothing is doubled by accident (tick them to copy them again).
 
+## Linux
+
+NoteSpin runs natively on Linux using GTK3, WebKit2GTK-4.1, and the system SQLite library (`libsqlite3`), sharing the
+same web interface and `.notespin` SQLite notebook format as Windows.
+
+- **Requirements:** The **.NET 10 Runtime** (plus GTK3, WebKit2GTK-4.1, and SQLite, which come preinstalled on Fedora
+  Workstation and most desktop distros). If `.NET 10` isn't installed yet, launching `./NoteSpin` tells you the exact
+  install command for your distro — for example on Fedora:
+  ```bash
+  sudo dnf install dotnet-runtime-10.0
+  ```
+- **Running:** Extract `NoteSpin-<version>-linux-x64.tar.gz` (or `-portable.tar.gz`) anywhere and run `./NoteSpin`.
+- **Where files live:** Notebooks default to `~/Documents/NoteSpin` and app settings to `~/.local/share/NoteSpin` (or
+  `NoteSpin Data/` beside `NoteSpin` when portable).
+- **App icon & opening `.notespin` files:** Turn on *Settings → Opening backups → Turn on* to register a per-user
+  `.desktop` entry, icon, and `.notespin` file association under `~/.local/share` (no `sudo` needed; turning it off
+  removes them cleanly). On Wayland desktops (such as GNOME), restarting NoteSpin after turning this on gives it its
+  real dock/launcher icon.
+- **Wayland notes:** Pop-out note windows, moving/resizing them, and the see-through background all work on Wayland.
+  Due to Wayland security restrictions, dragging a note window back onto the main window to re-dock (use the put-back
+  button instead) and client-side always-on-top pinning aren't available natively on Wayland (on GNOME you can use
+  `Alt+Space → Always on Top`, or launch under XWayland with `GDK_BACKEND=x11 ./NoteSpin`). Microsoft Sticky Notes
+  import is Windows-only.
+
 ## Keyboard, mouse and touch
 
 | Keys | |
@@ -306,14 +332,23 @@ them to this PC*.
 
 ## Building and changing NoteSpin
 
+**Windows** (`.NET Framework 4.8` + WinForms + WebView2):
 ```powershell
 .\build.ps1          # -> dist\NoteSpin
 .\release.ps1        # build, sign NoteSpin.exe, verify -> NoteSpin-<version>.zip and -portable.zip for a GitHub release
 ```
 
+**Linux** (`.NET 10` + GTK3 + WebKit2GTK-4.1):
+```bash
+./build.sh           # -> dist/NoteSpin-linux
+./release.sh         # -> NoteSpin-<version>-linux-x64.tar.gz and -portable.tar.gz for a GitHub release
+```
+
+`NoteSpin.csproj` automatically selects the Windows (`net48`) or Linux (`net10.0`) target based on the OS you build on.
+
 `release.ps1` signs with Azure Artifact Signing: it needs the `sign` tool
 (`dotnet tool install -g --prerelease sign`) and an `az login` with signing rights. The version comes from
-`<Version>` in `NoteSpin.csproj`. The portable zip is the same files with an empty `NoteSpin Data` folder.
+`<Version>` in `NoteSpin.csproj`. The portable archives are the same files with an empty `NoteSpin Data` folder.
 
 Needs the .NET SDK on the build PC only. The output folder is the whole app (about 3 MB):
 

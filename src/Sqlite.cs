@@ -6,12 +6,16 @@ using System.Text;
 namespace NoteSpin
 {
     /// <summary>
-    /// Minimal wrapper over the SQLite engine that ships with Windows (System32\winsqlite3.dll),
+    /// Minimal wrapper over the system SQLite engine (winsqlite3.dll on Windows, libsqlite3.so.0 on Linux),
     /// so the app carries no database library of its own. Used from the UI thread only.
     /// </summary>
     internal sealed class Sqlite : IDisposable
     {
+#if LINUX
+        const string Lib = "libsqlite3.so.0";
+#else
         const string Lib = "winsqlite3.dll";
+#endif
         const int SQLITE_OK = 0, SQLITE_ROW = 100, SQLITE_DONE = 101;
         const int SQLITE_INTEGER = 1, SQLITE_NULL = 5;
         const int OPEN_READONLY = 0x1, OPEN_READWRITE = 0x2, OPEN_CREATE = 0x4, OPEN_FULLMUTEX = 0x10000;
