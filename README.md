@@ -3,10 +3,12 @@
 Sticky notes on a spinning 3D card wheel, for Windows and Linux. Each note is a pastel card in the colour of its
 category; turn the wheel to flip through them, click the front card to open it.
 
-On Windows, nothing needs installing: copy the `NoteSpin` folder anywhere and run `NoteSpin.exe`. On Linux, extract
-the tarball and run `./NoteSpin` (uses the .NET 10 runtime and system GTK3 / WebKit2GTK-4.1 / SQLite). It can also be made
-[portable](#portable-notespin-on-a-usb-drive), keeping your notes in its own folder so it runs from a USB drive
-on any PC. Notebook files (`.notespin`) are standard SQLite databases and work identically on both Windows and Linux.
+On Windows, nothing needs installing: copy the `NoteSpin` folder anywhere and run `NoteSpin.exe`. It runs on
+.NET Framework 4.8 and the Microsoft Edge WebView2 Runtime, both part of Windows 10 and 11. On
+[Linux](#linux), extract the tarball and run `./NoteSpin` (uses the .NET 10 runtime and system GTK3 /
+WebKit2GTK-4.1 / SQLite). It can also be made [portable](#portable-notespin-on-a-usb-drive), keeping your notes
+in its own folder so it runs from a USB drive on any PC. Notebook files (`.notespin`) are standard SQLite
+databases and work identically on both Windows and Linux.
 
 - [Getting started](#getting-started)
 - [The wheel](#the-wheel)
@@ -389,7 +391,13 @@ it open.
   schema, notes, categories, search), `src\Settings.cs` (the app's settings), `src\Places.cs` (where things
   are kept: on the PC, or portable beside the exe), `src\PortableSwitch.cs` (turning portable on and off, in a
   restarted NoteSpin once the old one has closed), `src\FileAssoc.cs` (the optional
-  double-click setting), `src\FolderPicker.cs` (the Windows folder picker), `src\Sqlite.cs`, `src\WebAssets.cs`.
+  double-click setting), `src\FolderPicker.cs` (the Windows folder picker), `src\Sqlite.cs`, `src\WebAssets.cs`,
+  `src\Json.cs` (JSON on both platforms).
+- **Linux:** `src/linux/` holds the GTK versions of `Program`, `MainForm`, `NoteWindow`, `PageHost` and
+  `FileAssoc`, plus `GtkNative.cs` (the GTK3 / WebKit2GTK calls). The page is served at `notespin://app/` and
+  reaches the C# side through a WebKit script message handler, which `host.js` wraps as the same `window.NS`.
+  Everything else in `src\` is shared. GTK, WebKit2GTK, libsoup and SQLite are the system's own libraries,
+  loaded at run time; none are bundled.
 - **Pages:** `web\index.html` and `web\note.html`, `web\css\app.css`, and in `web\js`: `app.js` (panel,
   views, search, notebooks, settings, sending notes to note windows, copying from Sticky Notes, notes from
   dropped text files), `notewin.js`

@@ -10,7 +10,8 @@ namespace NoteSpin
 {
     /// <summary>
     /// JSON helper shared between .NET Framework (JavaScriptSerializer) and modern .NET (System.Text.Json).
-    /// Deserialises objects as Dictionary&lt;string, object&gt; and arrays as List&lt;object&gt; on both platforms.
+    /// Deserialises objects as Dictionary&lt;string, object&gt; on both platforms; arrays come back as object[] on
+    /// .NET Framework and List&lt;object&gt; on modern .NET, so callers treat them as IEnumerable.
     /// </summary>
     internal static class JsonCodec
     {
