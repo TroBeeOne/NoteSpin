@@ -30,6 +30,8 @@ namespace NoteSpin
             WEBKIT_CONTEXT_MENU_ACTION_DOWNLOAD_LINK_TO_DISK,
             WEBKIT_CONTEXT_MENU_ACTION_OPEN_IMAGE_IN_NEW_WINDOW,
             WEBKIT_CONTEXT_MENU_ACTION_DOWNLOAD_IMAGE_TO_DISK,
+            WEBKIT_CONTEXT_MENU_ACTION_COPY_IMAGE_TO_CLIPBOARD,
+            WEBKIT_CONTEXT_MENU_ACTION_COPY_IMAGE_URL_TO_CLIPBOARD,
             WEBKIT_CONTEXT_MENU_ACTION_OPEN_FRAME_IN_NEW_WINDOW,
             WEBKIT_CONTEXT_MENU_ACTION_OPEN_VIDEO_IN_NEW_WINDOW,
             WEBKIT_CONTEXT_MENU_ACTION_OPEN_AUDIO_IN_NEW_WINDOW,
@@ -401,10 +403,10 @@ namespace NoteSpin
                 }
             }
 
-            // Block browser reload/print/zoom shortcuts so the page stays app-like
+            // Block browser reload/print shortcuts so the page stays app-like. The zoom keys (Ctrl+Plus, Ctrl+Minus,
+            // Ctrl+0) go to the page: in a note they change the text size, and elsewhere the page ignores them.
             if (key == GDK_KEY_F5 ||
-                (ctrl && (key == GDK_KEY_r || key == GDK_KEY_R || key == GDK_KEY_p || key == GDK_KEY_P ||
-                          key == GDK_KEY_plus || key == GDK_KEY_minus || key == GDK_KEY_equal || key == GDK_KEY_0)))
+                (ctrl && (key == GDK_KEY_r || key == GDK_KEY_R || key == GDK_KEY_p || key == GDK_KEY_P)))
                 return 1;
 
             return 0;

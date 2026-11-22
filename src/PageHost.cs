@@ -23,6 +23,7 @@ namespace NoteSpin
         {
             "back", "forward", "reload", "saveAs", "print", "createQrCode", "share", "inspectElement", "viewPageSource",
             "openLinkInNewWindow", "saveLinkAs", "saveImageAs", "saveMediaAs", "openImageInNewWindow", "copyLinkToHighlight", "webCapture",
+            "copyImage", "copyImageLocation",   // the cards have their own menu (Copy as picture); nothing else is a picture
         };
 
         // NOTESPIN_WEB=<the project's web folder> serves the page from disk instead of the exe, so a

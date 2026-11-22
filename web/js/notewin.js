@@ -3,7 +3,7 @@
 // it with the same editor, tells the main window when it changes, and can send it back there.
 // Each note window has its own note, and a note is open in one place at a time, so no two pages edit the same note.
 
-import {Editor} from './editor.js';
+import {Editor, showTextSize} from './editor.js';
 import {GENERAL_ID} from './notes.js';
 import {cancelDialogs, dialogOpen, toast} from './ui.js';
 
@@ -60,6 +60,7 @@ const app = {
     editor.setPinned(pinned);
   },
   popIn: () => queue(popIn),
+  textSizeChanged: pct => toMain({type: 'textSize', size: pct}),   // the main window, and the other notes, show it too
 };
 
 /**
@@ -117,6 +118,7 @@ function start() {
   NS.on('close', m => queue(async () => { await closeNote(); if (m.id) toMain({id: m.id}); }));
   NS.on('dock', () => queue(popIn));
   NS.on('categoriesChanged', () => queue(refreshCategories));
+  NS.on('textSize', m => showTextSize(m.size));   // changed in Settings or another note
   // Ctrl+N: a new note, in a window of its own (this one stays)
   document.addEventListener('keydown', e => {
     if (dialogOpen() || !e.ctrlKey || e.altKey || e.key.toLowerCase() !== 'n') return;

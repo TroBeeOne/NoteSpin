@@ -183,12 +183,14 @@ export class Spinner {
   /**
    * host: the element the 3D view fills.
    * onOpen(item, index): the front card was clicked.  onChange(index): another card is now at the front.
+   * onMenu(item, {x, y}): a card's menu is asked for (right-click, a long press, or the Menu key for the front card).
    * Items: {key (changes when the face must be redrawn), id, face (see cardface.js)}.
    */
-  constructor(host, {onOpen, onChange} = {}) {
+  constructor(host, {onOpen, onChange, onMenu} = {}) {
     this.host = host;
     this.onOpen = onOpen || (() => {});
     this.onChange = onChange || (() => {});
+    this.onMenu = onMenu || (() => {});
     this.items = [];
     this.N = 0;
     this.L = MIN_RING;
@@ -866,7 +868,9 @@ export class Spinner {
       (this.mode === 'target' && (Math.abs(this.target - this.pos) > 0.2 || Math.abs(this.vel) > 2));
 
     let g = null;   // the gesture in progress
+    let rightDownAt = -1e9;   // when the right button (or a pen's barrel button) last went down
     el.addEventListener('pointerdown', e => {
+      if (e.button === 2) rightDownAt = performance.now();
       if (!this.enabled || e.button !== 0) return;
       this.sound.init();
       el.setPointerCapture(e.pointerId);
@@ -918,7 +922,7 @@ export class Spinner {
         return;
       }
       if (this.mode === 'drag') { this.target = this.snap(this.pos); this.mode = 'target'; this.wake(); }
-      if (gesture.axis || e.type === 'pointercancel' || gesture.grabbed) return;
+      if (gesture.axis || e.type === 'pointercancel' || gesture.grabbed || gesture.menu) return;
       const card = pick(e.clientX, e.clientY);
       if (!card) return;
       // the front card is the one the wheel is resting on, or settling on
@@ -928,6 +932,30 @@ export class Spinner {
     };
     el.addEventListener('pointerup', end);
     el.addEventListener('pointercancel', end);
+
+    // A card's menu instead of the browser's (whose "Copy image" can't copy the 3D view). Right-click a card, or
+    // press and hold one on a touch screen: that card's menu, by the pointer, and the card comes to the front.
+    // From the keyboard (the Menu key, Shift+F10): the front card's.
+    el.addEventListener('contextmenu', e => {
+      e.preventDefault();
+      if (!this.enabled) return;
+      const fromPointer = !!g || performance.now() - rightDownAt < 2000;
+      rightDownAt = -1e9;
+      if (!fromPointer) {
+        const item = this.current(), r = this.frontRect();
+        if (item && r) this.onMenu(item, {x: r.left + r.width / 2, y: r.top + r.height / 3});
+        return;
+      }
+      if (g) {
+        if (g.axis) return;   // turning the wheel, not asking for a menu
+        g.menu = true;        // the finger coming up isn't a tap
+      }
+      const card = pick(e.clientX, e.clientY);
+      if (!card) return;
+      const front = this.mode === 'target' ? this.target : Math.round(this.pos);
+      if (card.v !== front) { this.target = card.v; this.mode = 'target'; this.wake(); }
+      this.onMenu(card.item, {x: e.clientX, y: e.clientY});
+    });
 
     // One notch of a mouse wheel turns one card; a touchpad's small steps add up to one
     el.addEventListener('wheel', e => {

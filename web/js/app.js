@@ -1,10 +1,11 @@
 // NoteSpin: the side panel, the views (all notes, categories, one category), search, notebooks and backups.
 
 import {Spinner} from './spinner.js';
-import {Editor, askPassword} from './editor.js';
+import {Editor, askPassword, TEXT_SIZES, textSize, setTextSize, showTextSize} from './editor.js';
 import {LockSession} from './crypto.js';
-import {PALETTE, GENERAL_ID, pickColor, analyze, parseHtml, textToBlocks} from './notes.js';
-import {dialog, confirmDlg, promptDlg, alertDlg, toast, menu, esc, dialogOpen, menuOpen} from './ui.js';
+import {PALETTE, GENERAL_ID, pickColor, analyze, parseHtml, textToBlocks, toText, isRtlText} from './notes.js';
+import {drawFace, FACE_W, FACE_H} from './cardface.js';
+import {dialog, confirmDlg, promptDlg, alertDlg, toast, menu, esc, dialogOpen, menuOpen, letterKey} from './ui.js';
 
 const $ = id => document.getElementById(id);
 const collator = new Intl.Collator(undefined, {sensitivity: 'base', numeric: true});
@@ -45,6 +46,7 @@ const app = {
     $('stage').querySelector('canvas')?.focus();
   },
   popOut: opts => popOut(opts),
+  textSizeChanged: pct => textSizeToNotes(pct),
 };
 
 // After a note closed with nothing in it (deleted, with Undo), or was deleted
@@ -126,7 +128,7 @@ function noteItem(n) {
 }
 
 function categoryItem(c, notes) {
-  const titles = sortNotes(notes).slice(0, 14).map(n => ({k: 'ul', d: 0, x: (n.locked ? '🔒 ' : '') + (n.title || 'Untitled')}));
+  const titles = sortNotes(notes).slice(0, 14).map(n => ({k: 'ul', d: 0, x: (n.locked ? '🔒 ' : '') + (n.title || 'Untitled'), r: isRtlText(n.title) ? 1 : 0}));
   const label = state.matches ? plural(notes.length, 'match', 'matches') : plural(notes.length, 'note');
   const date = shortDate(Math.max(0, ...notes.map(n => n.updated)));
   return {
@@ -177,9 +179,9 @@ function updatePanel() {
   // the folded panel's one button for both: its icon shows the view that's on, as the sound button does
   const cats = state.view !== 'all', vt = $('viewToggle');
   vt.innerHTML = `<svg><use href="#i-${cats ? 'grid' : 'cards'}"/></svg>`;
-  vt.title = !cats ? 'Showing all notes (click to show categories)'
-    : inCat ? `Showing “${state.catMap.get(state.catId)?.name || ''}” (click to show all notes)`
-    : 'Showing categories (click to show all notes)';
+  vt.title = !cats ? 'Showing all notes (click or Ctrl+G to show categories)'
+    : inCat ? `Showing “${state.catMap.get(state.catId)?.name || ''}” (click or Ctrl+G to show all notes)`
+    : 'Showing categories (click or Ctrl+G to show all notes)';
   vt.setAttribute('aria-label', vt.title);
   $('searchClear').hidden = !state.query;
   $('searchBox').classList.toggle('active', !!state.query);
@@ -209,6 +211,9 @@ function updateEmpty() {
   btn.hidden = !action;
   if (action) { btn.textContent = action[0]; btn.onclick = action[1]; }
 }
+
+// All notes ↔ Categories (the folded panel's button, and Ctrl+G); from one category's notes, to all notes
+const toggleView = () => setView(state.view === 'all' ? 'categories' : 'all');
 
 function setView(v) {
   if (v === 'categories' && state.view === 'category') { leaveCategory(); return; }
@@ -626,6 +631,83 @@ function dockHover(x, y) {
 function hideDropZone() {
   $('dropZone').hidden = true;
   $('dropZone').classList.remove('on');
+}
+
+/* ---------- a card's menu (right-click it) ---------- */
+
+function cardMenu(item, at) {
+  if (!item || editor.isOpen || dialogOpen()) return;
+  const canvas = spinner.renderer.domElement;
+  const act = fn => () => { canvas.focus(); fn(); };
+  const opts = {at, bounds: $('stage').getBoundingClientRect()};
+  if (item.kind === 'category') {
+    menu(canvas, [
+      {label: 'Open', onClick: act(() => openItem(item))},
+      '-',
+      {label: 'Copy as picture', onClick: act(() => copyPicture(item))},
+    ], opts);
+    return;
+  }
+  const n = state.notes.find(x => x.id === item.id);
+  if (!n) return;
+  const out = isOut(n.id);
+  menu(canvas, [
+    {label: out ? 'Show its window' : 'Open', onClick: act(() => openItem(item))},
+    {label: 'Open in its own window', disabled: out, onClick: act(() => openItem(item, {inWindow: true}))},
+    '-',
+    {label: 'Copy text', disabled: n.locked, hint: n.locked ? 'Locked' : '', onClick: act(() => copyText(n))},
+    {label: 'Copy as picture', onClick: act(() => copyPicture(item))},
+    '-',
+    {label: 'Delete…', danger: true, onClick: act(() => deleteFromCard(n))},
+  ], opts);
+}
+
+// The note's text on the clipboard, its lists marked (• 1. ☐ ☑)
+async function copyText(n) {
+  try {
+    const note = await NS.call('NoteGet', n.id);
+    if (!note) { toast('That note isn\'t there any more.'); await loadNotes(); return; }
+    if (note.locked) return;
+    await NS.call('CopyText', toText(parseHtml(note.body)));
+    toast('Text copied.');
+  } catch (e) { toast('Couldn\'t copy the text: ' + e.message, {kind: 'error'}); }
+}
+
+// The card's face as a picture on the clipboard, drawn afresh at its full size
+async function copyPicture(item) {
+  try {
+    const c = document.createElement('canvas');
+    c.width = FACE_W;
+    c.height = FACE_H;
+    drawFace(c.getContext('2d'), item.face);
+    await NS.call('CopyPicture', c.toDataURL('image/png').slice('data:image/png;base64,'.length));
+    toast('Picture copied.');
+  } catch (e) { toast('Couldn\'t copy the picture: ' + e.message, {kind: 'error'}); }
+}
+
+// Deletes a note from its card, with Undo. One that's out in its window closes there first (saved).
+async function deleteFromCard(n) {
+  const ok = await confirmDlg({title: 'Delete this note?', message: `“${n.title || 'Untitled'}” will be deleted.`, ok: 'Delete', danger: true});
+  if (!ok) return;
+  try {
+    const w = noteWindowState().find(x => x.id === n.id);
+    if (w) await NS.closeNoteWindow(w.win);
+    const note = await NS.call('NoteGet', n.id);
+    if (!note) { await loadNotes(); return; }   // it was emptied in its window, so it's gone already
+    const cat = state.catMap.get(note.cat);
+    const doc = note.locked ? null : analyze(parseHtml(note.body));
+    const original = {
+      title: note.title, body: note.body, locked: note.locked,
+      preview: doc ? JSON.stringify(doc.lines) : '', search: doc ? doc.search : note.title.toLocaleLowerCase(),
+      category: cat && cat.id !== GENERAL_ID ? cat.name : '', categoryColor: cat?.color,
+    };
+    await NS.call('NoteDelete', note.id);
+    await loadNotes();
+    toast('Note deleted.', {action: {label: 'Undo', fn: () => restoreNote(original)}, timeout: 8000});
+  } catch (e) {
+    toast('Couldn\'t delete the note: ' + e.message, {kind: 'error'});
+    await loadNotes().catch(() => {});
+  }
 }
 
 // A locked note whose password is forgotten can still be deleted (with Undo, in case it was the wrong one).
@@ -1046,6 +1128,9 @@ async function manageCategories() {
 
 /* ---------- settings ---------- */
 
+// the text size (Settings, or Ctrl+Plus / Ctrl+Minus in a note) changed here: the note windows show it too
+const textSizeToNotes = pct => NS.call('ToNote', JSON.stringify({type: 'textSize', size: pct})).catch(() => {});
+
 // portable: the NoteSpin Data folder beside the executable, where everything is kept (null when it isn't portable)
 let portableDir = null;
 let isLinux = false;
@@ -1178,6 +1263,13 @@ async function showSettings() {
       NoteSpin folder can go on a USB drive and run on any PC, with your notes.</p>
       <div class="row-btns"><button class="btn" type="button" id="portableBtn">Make portable…</button></div>`}
       <h3>Notes</h3>
+      <div class="range-row size-row"><span>Text size</span>
+        <input type="range" id="textSize" min="0" max="${TEXT_SIZES.length - 1}" step="1" value="${TEXT_SIZES.indexOf(textSize())}" aria-label="Text size of notes" aria-valuetext="${textSize()}%">
+        <output id="textSizeText">${textSize()}%</output>
+        <button class="btn" type="button" id="textSizeReset"${textSize() === 100 ? ' disabled' : ''}>Reset</button></div>
+      <p class="size-sample" style="background:${esc(state.catMap.get(GENERAL_ID)?.color || PALETTE[0].hex)}">Groceries: milk, bread and apples</p>
+      <p class="hint">How big the text is in every note, from ${TEXT_SIZES[0]}% to ${TEXT_SIZES[TEXT_SIZES.length - 1]}%. In a note, Ctrl+Plus
+      and Ctrl+Minus change it too (or Ctrl and the mouse wheel), and Ctrl+0 sets it back to 100%. The cards stay as they are.</p>
       <label class="check"><input type="checkbox" id="ownWindow"${ownWindow() ? ' checked' : ''}> Always open notes in their own window</label>
       <p class="hint">Otherwise a note opens over the cards. To give it a window of its own, drag it out of NoteSpin by its
       top strip, or click <svg class="inline-icon"><use href="#i-popout"/></svg>. Any number of notes can be out at once,
@@ -1212,7 +1304,12 @@ async function showSettings() {
         <kbd>Enter</kbd><span>Open the front card</span>
         <kbd>Ctrl+N</kbd><span>New note</span>
         <kbd>Ctrl+F</kbd><span>Search</span>
+        <kbd>Ctrl+G</kbd><span>All notes ↔ Categories</span>
+        <kbd>Menu key</kbd><span>The front card's menu: copy, delete… (or right-click a card)</span>
         <kbd>Esc</kbd><span>Close a note, clear the search, or go back to the categories</span>
+        <kbd>Ctrl+Plus</kbd><span>In a note: bigger text (Ctrl+Minus: smaller, Ctrl+0: back to 100%)</span>
+        <kbd>Ctrl+B</kbd><span>In a note: bold (Ctrl+I italic, Ctrl+U underline, Ctrl+T strikethrough)</span>${isLinux ? '' : `
+        <kbd>Ctrl+Right Shift</kbd><span>In a note: this line reads right to left (Ctrl+Left Shift: left to right)</span>`}
         <kbd>Tab</kbd><span>In a list: move an item in (Shift+Tab: out)</span>
         <kbd>Ctrl+Enter</kbd><span>In a checklist: tick or untick</span>
       </div>
@@ -1229,6 +1326,17 @@ async function showSettings() {
           box.querySelector('#assocState').textContent = on ? 'On for this copy of NoteSpin.' : 'Off.';
         } catch (err) { alertDlg('Couldn\'t change it', err.message); }
       });
+      const sizeIn = box.querySelector('#textSize'), sizeReset = box.querySelector('#textSizeReset');
+      const sizeTo = pct => {
+        setTextSize(pct);
+        textSizeToNotes(pct);
+        sizeIn.value = TEXT_SIZES.indexOf(pct);
+        sizeIn.setAttribute('aria-valuetext', pct + '%');
+        box.querySelector('#textSizeText').textContent = pct + '%';
+        sizeReset.disabled = pct === 100;
+      };
+      sizeIn.addEventListener('input', () => sizeTo(TEXT_SIZES[+sizeIn.value]));
+      sizeReset.addEventListener('click', () => { sizeTo(100); sizeIn.focus(); });
       box.querySelector('#ownWindow').addEventListener('change', e => NS.prefSet('noteWindow', e.target.checked ? '1' : '0'));
       box.querySelector('#stickyBtn')?.addEventListener('click', importStickyNotes);
       box.querySelector('#hideBase').addEventListener('change', e => {
@@ -1290,7 +1398,8 @@ const SAMPLES = [
     <ul><li>Turn the wheel with the mouse wheel, by dragging up or down, or with the arrow keys.</li>
     <li>Click the front card to open it. Click a card behind it to bring that one forward.</li>
     <li>Drag sideways to look at the wheel from another side.</li>
-    <li>Notes save as you type. Esc closes a note.</li></ul>
+    <li>Notes save as you type. Esc closes a note.</li>
+    <li>Right-click a card to copy it or delete it.</li></ul>
     <p>Every note has a category, shown by its colour. Leave the category blank for General.</p>`},
   {cat: '', html: `<p>Backing up a notebook</p><ol><li>Click the notebook name at the top of the panel.</li>
     <li>Choose Export a backup… and keep the .notespin file somewhere safe.</li>
@@ -1325,9 +1434,10 @@ function onKey(e) {
   const el = document.activeElement;
   const inSearch = el === $('searchInput');
   const typing = !inSearch && el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable);
-  const k = e.key.toLowerCase();
+  const k = letterKey(e);
   if (e.ctrlKey && !e.altKey && k === 'n') { e.preventDefault(); newNote(); return; }
   if (e.ctrlKey && !e.altKey && k === 'f') { e.preventDefault(); focusSearch(); return; }
+  if (e.ctrlKey && !e.altKey && !e.shiftKey && k === 'g') { e.preventDefault(); toggleView(); return; }
   if (typing || e.ctrlKey || e.altKey || e.metaKey) return;
   const nav = {ArrowDown: 1, PageDown: 1, ArrowUp: -1, PageUp: -1};
   if (!inSearch) Object.assign(nav, {ArrowRight: 1, ArrowLeft: -1});
@@ -1354,7 +1464,7 @@ function wire() {
   $('searchClear').addEventListener('click', () => { clearSearch(); $('searchInput').focus(); });
   $('searchBox').addEventListener('click', () => { if (document.body.classList.contains('collapsed')) focusSearch(); });
   $('viewSeg').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setView(b.dataset.view); });
-  $('viewToggle').addEventListener('click', () => setView(state.view === 'all' ? 'categories' : 'all'));
+  $('viewToggle').addEventListener('click', toggleView);
   $('orderSeg').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setOrder(b.dataset.order); });
   $('crumbBack').addEventListener('click', leaveCategory);
   $('prevBtn').addEventListener('click', () => spinner.prev());
@@ -1406,6 +1516,7 @@ function wire() {
   // from the note window
   NS.on('noteSaved', refreshSoon);
   NS.on('categoriesChanged', refreshSoon);
+  NS.on('textSize', m => showTextSize(m.size));   // changed in a note window (the app tells the others)
   NS.on('noteClosed', m => noteWindowClosed(m).catch(() => {}));
   NS.on('dockIn', m => dockIn(m.state).catch(e => toast('Couldn\'t bring the note back: ' + e.message, {kind: 'error'})));
   window.__nsDockHover = dockHover;
@@ -1468,9 +1579,9 @@ async function start() {
   }
   state.view = NS.prefGet('view') === 'categories' ? 'categories' : 'all';
   state.order = NS.prefGet('order') === 'recent' ? 'recent' : 'az';
-  spinner = new Spinner($('stage'), {onOpen: item => openItem(item), onChange: i => updatePosition(i)});
+  spinner = new Spinner($('stage'), {onOpen: item => openItem(item), onChange: i => updatePosition(i), onMenu: cardMenu});
   spinner.renderer.domElement.tabIndex = 0;
-  spinner.renderer.domElement.setAttribute('aria-label', 'Note cards: arrow keys turn, Enter opens');
+  spinner.renderer.domElement.setAttribute('aria-label', 'Note cards: arrow keys turn, Enter opens, the Menu key shows what you can do with the front card');
   editor = new Editor(app);
   // the window frame hidden: the app started without it (and told the page so in its address)
   let frame = null;

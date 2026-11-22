@@ -110,7 +110,9 @@ namespace NoteSpin
         public const int WEBKIT_CONTEXT_MENU_ACTION_DOWNLOAD_LINK_TO_DISK = 3;
         public const int WEBKIT_CONTEXT_MENU_ACTION_OPEN_IMAGE_IN_NEW_WINDOW = 5;
         public const int WEBKIT_CONTEXT_MENU_ACTION_DOWNLOAD_IMAGE_TO_DISK = 6;
-        public const int WEBKIT_CONTEXT_MENU_ACTION_OPEN_FRAME_IN_NEW_WINDOW = 8;
+        public const int WEBKIT_CONTEXT_MENU_ACTION_COPY_IMAGE_TO_CLIPBOARD = 7;
+        public const int WEBKIT_CONTEXT_MENU_ACTION_COPY_IMAGE_URL_TO_CLIPBOARD = 8;
+        public const int WEBKIT_CONTEXT_MENU_ACTION_OPEN_FRAME_IN_NEW_WINDOW = 9;
         public const int WEBKIT_CONTEXT_MENU_ACTION_GO_BACK = 10;
         public const int WEBKIT_CONTEXT_MENU_ACTION_GO_FORWARD = 11;
         public const int WEBKIT_CONTEXT_MENU_ACTION_STOP = 12;
@@ -256,6 +258,10 @@ namespace NoteSpin
         [DllImport(GtkLib)] public static extern int gtk_dialog_run(IntPtr dialog);
         [DllImport(GtkLib)] public static extern IntPtr gtk_selection_data_get_uris(IntPtr selectionData);
 
+        [DllImport(GtkLib)] public static extern IntPtr gtk_clipboard_get(IntPtr selection);
+        [DllImport(GtkLib)] public static extern void gtk_clipboard_set_text(IntPtr clipboard, byte[] text, int len);
+        [DllImport(GtkLib)] public static extern void gtk_clipboard_set_image(IntPtr clipboard, IntPtr pixbuf);
+
         /* ---------- GDK3 ---------- */
 
         [DllImport(GdkLib)] public static extern IntPtr gdk_screen_get_rgba_visual(IntPtr screen);
@@ -268,6 +274,7 @@ namespace NoteSpin
         [DllImport(GdkLib)] public static extern IntPtr gdk_cursor_new_from_name(IntPtr display, [MarshalAs(UnmanagedType.LPUTF8Str)] string name);
         [DllImport(GdkLib)] public static extern int gdk_window_get_state(IntPtr gdkWin);
         [DllImport(GdkLib)] public static extern void gdk_set_program_class([MarshalAs(UnmanagedType.LPUTF8Str)] string programClass);
+        [DllImport(GdkLib)] public static extern IntPtr gdk_atom_intern([MarshalAs(UnmanagedType.LPUTF8Str)] string atomName, int onlyIfExists);
 
         [DllImport(GdkLib)] public static extern int gdk_event_get_coords(IntPtr ev, out double x, out double y);
         [DllImport(GdkLib)] public static extern int gdk_event_get_root_coords(IntPtr ev, out double x, out double y);
@@ -444,6 +451,43 @@ namespace NoteSpin
                 if (pixbuf != IntPtr.Zero) gtk_window_set_icon(win, pixbuf);
             }
             catch { }
+            finally { g_object_unref(loader); }
+        }
+
+        /* ---------- the clipboard ---------- */
+
+        // The clipboard Ctrl+V pastes from (not the middle-click selection). Set from the GTK main thread; GTK
+        // answers paste requests while NoteSpin runs, and hands the contents to the desktop's clipboard manager,
+        // if there is one, when NoteSpin quits.
+        static IntPtr Clipboard() => gtk_clipboard_get(gdk_atom_intern("CLIPBOARD", 0));
+
+        public static void ClipboardSetText(string text)
+        {
+            byte[] utf8 = Encoding.UTF8.GetBytes(text ?? "");
+            gtk_clipboard_set_text(Clipboard(), utf8, utf8.Length);
+        }
+
+        /// <summary>Puts a picture (PNG bytes) on the clipboard; apps can paste it as PNG, JPEG, BMP….</summary>
+        public static void ClipboardSetImage(byte[] png)
+        {
+            IntPtr loader = gdk_pixbuf_loader_new();
+            if (loader == IntPtr.Zero) throw new InvalidOperationException("The picture couldn't be made.");
+            try
+            {
+                if (gdk_pixbuf_loader_write(loader, png, (UIntPtr)png.Length, out IntPtr err) == 0)
+                {
+                    if (err != IntPtr.Zero) g_error_free(err);
+                    throw new InvalidOperationException("The picture couldn't be read.");
+                }
+                if (gdk_pixbuf_loader_close(loader, out err) == 0)
+                {
+                    if (err != IntPtr.Zero) g_error_free(err);
+                    throw new InvalidOperationException("The picture couldn't be read.");
+                }
+                IntPtr pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);   // the loader's; the clipboard takes its own reference
+                if (pixbuf == IntPtr.Zero) throw new InvalidOperationException("The picture couldn't be read.");
+                gtk_clipboard_set_image(Clipboard(), pixbuf);
+            }
             finally { g_object_unref(loader); }
         }
 

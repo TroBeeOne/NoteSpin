@@ -1,8 +1,9 @@
 // Draws the front of a card: the sticky-note paper in its category colour, a darker band across the top
 // (the category, and a tab on the right), the title, then the start of the note with its bullets, numbers
-// and checkboxes. The 3D view turns the drawing into the card's texture.
+// and checkboxes, its bold, italic, underlined and struck-through text, and right-to-left lines from the right.
+// The 3D view turns the drawing into the card's texture (and Copy as picture copies it).
 
-import {bandColor} from './notes.js';
+import {bandColor, isRtlText} from './notes.js';
 
 export const FACE_W = 1024;
 export const FACE_H = 784;
@@ -46,6 +47,156 @@ function ellipsize(ctx, text, max) {
     if (ctx.measureText(text.slice(0, mid) + '…').width <= max) lo = mid; else hi = mid - 1;
   }
   return text.slice(0, lo).trimEnd() + '…';
+}
+
+/* ---------- a line of the note, with its styles ---------- */
+
+const BODY_PX = 35;
+const bodyFont = m => `${m.includes('i') ? 'italic ' : ''}${m.includes('b') ? 700 : 400} ${BODY_PX}px ${FONT}`;
+
+// A preview line as runs [{s, m}]: its text cut where its styles change (f: [[from, to, styles], …], see notes.js)
+function runsOf(l) {
+  const x = String(l.x ?? '');
+  const out = [];
+  let at = 0;
+  if (Array.isArray(l.f)) {
+    for (const s of l.f) {
+      if (!Array.isArray(s)) continue;
+      const a = Math.max(at, Math.min(x.length, s[0] | 0)), b = Math.min(x.length, s[1] | 0), m = typeof s[2] === 'string' ? s[2] : '';
+      if (b <= a) continue;
+      if (a > at) out.push({s: x.slice(at, a), m: ''});
+      out.push({s: x.slice(a, b), m});
+      at = b;
+    }
+  }
+  if (at < x.length) out.push({s: x.slice(at), m: ''});
+  return out;
+}
+
+const runsText = rs => rs.map(r => r.s).join('');
+function runsWidth(ctx, rs) {
+  let w = 0;
+  for (const r of rs) { ctx.font = bodyFont(r.m); w += ctx.measureText(r.s).width; }
+  return w;
+}
+function firstChars(rs, n) {
+  const out = [];
+  for (const r of rs) { if (n <= 0) break; out.push({s: r.s.slice(0, n), m: r.m}); n -= r.s.length; }
+  return out;
+}
+function afterChars(rs, n) {
+  const out = [];
+  for (const r of rs) {
+    if (n >= r.s.length) { n -= r.s.length; continue; }
+    out.push({s: r.s.slice(n), m: r.m});
+    n = 0;
+  }
+  return out;
+}
+function trimRunsEnd(rs) {
+  const out = rs.map(r => ({...r}));
+  while (out.length) {
+    const last = out[out.length - 1];
+    last.s = last.s.trimEnd();
+    if (last.s) break;
+    out.pop();
+  }
+  return out;
+}
+
+/** Splits styled runs into lines that fit max, as wrap does for plain text: [[runs of line 1], …]. */
+function wrapRuns(ctx, runs, max) {
+  // words: a word and the space after it, which may be in more than one style ("half-bold")
+  const words = [];
+  let word = [];
+  for (const r of runs) {
+    for (const part of r.s.replace(/\t/g, '    ').split(/(?<=\s)/)) {
+      if (!part) continue;
+      word.push({s: part, m: r.m});
+      if (/\s$/.test(part)) { words.push(word); word = []; }
+    }
+  }
+  if (word.length) words.push(word);
+  const out = [];
+  let line = [], lw = 0;
+  for (const wd of words) {
+    const ww = runsWidth(ctx, wd);
+    if (lw + ww <= max) { line.push(...wd); lw += ww; continue; }
+    if (runsText(line).trim()) out.push(trimRunsEnd(line));
+    let rest = wd;
+    while (runsWidth(ctx, rest) > max && runsText(rest).length > 1) {
+      let n = runsText(rest).length;
+      while (n > 1 && runsWidth(ctx, firstChars(rest, n)) > max) n--;
+      out.push(firstChars(rest, n));
+      rest = afterChars(rest, n);
+    }
+    line = rest;
+    lw = runsWidth(ctx, rest);
+  }
+  if (runsText(line).trim() || !out.length) out.push(trimRunsEnd(line));
+  return out.map(joinRuns);
+}
+
+// Joins neighbouring runs in the same style (wrapping leaves a run per word), so each is drawn in one go and the
+// browser puts its words in order whichever way they read
+function joinRuns(rs) {
+  const out = [];
+  for (const r of rs) {
+    const last = out[out.length - 1];
+    if (last && last.m === r.m) last.s += r.s;
+    else if (r.s) out.push({...r});
+  }
+  return out;
+}
+
+const RTL_CH = /[֐-ࣿיִ-﷿ﹰ-﻿]/u;
+// which way a run's letters go: 'rtl', 'ltr', 'both', or '' (no letters: spaces, digits, punctuation)
+function lettersDir(s) {
+  let r = false, l = false;
+  for (const ch of s) {
+    if (RTL_CH.test(ch)) r = true;
+    else if (/\p{L}/u.test(ch)) l = true;
+    if (r && l) return 'both';
+  }
+  return r ? 'rtl' : l ? 'ltr' : '';
+}
+
+/**
+ * Draws a line of runs: from x rightwards, or (rtl) leftwards from x as its right edge. Each run is drawn in one go;
+ * between runs, a simple version of what the browser does with mixed scripts: runs of the other direction (English in
+ * a Hebrew line, say) stay in reading order among themselves, placed as one stretch. Underlined and struck-through
+ * runs get their lines; strike: the whole line is struck through (a ticked checkbox).
+ */
+function drawRuns(ctx, rs, x, y, rtl, strike) {
+  const base = rtl ? 'rtl' : 'ltr';
+  const dirs = rs.map(r => { const d = lettersDir(r.s); return d === 'both' ? base : d; });
+  // no letters: goes the way of the runs on both sides when they agree, else the line's way
+  dirs.forEach((d, i) => {
+    if (d) return;
+    const before = dirs.slice(0, i).reverse().find(Boolean), after = dirs.slice(i + 1).find(Boolean);
+    dirs[i] = before && before === after ? before : base;
+  });
+  const groups = [];
+  rs.forEach((r, i) => {
+    const g = groups[groups.length - 1];
+    if (g && g.dir === dirs[i]) g.runs.push(r);
+    else groups.push({dir: dirs[i], runs: [r]});
+  });
+  // left to right on the card
+  const order = (rtl ? groups.reverse() : groups).flatMap(g => (g.dir === 'rtl' ? [...g.runs].reverse() : g.runs).map(r => ({r, dir: g.dir})));
+  const widths = order.map(({r}) => { ctx.font = bodyFont(r.m); return ctx.measureText(r.s).width; });
+  let left = rtl ? x - widths.reduce((a, b) => a + b, 0) : x;
+  ctx.textAlign = 'left';
+  order.forEach(({r, dir}, i) => {
+    const w = widths[i];
+    ctx.font = bodyFont(r.m);
+    ctx.direction = dir;
+    ctx.fillText(r.s, left, y);
+    if (r.m.includes('u') && r.s.trim()) ctx.fillRect(left, y + 6, w, 2.5);
+    if (strike || r.m.includes('s')) ctx.fillRect(left, y - 11, w, 3);
+    left += w;
+  });
+  ctx.direction = 'ltr';
 }
 
 /** Splits text into lines that fit max (long words are broken too). */
@@ -172,17 +323,22 @@ export function drawFace(ctx, f) {
     ctx.fillText(ellipsize(ctx, dateText, Math.max(0, right - 10 - x)), x, BAND / 2 + 2);
   }
 
-  // title (up to two lines)
+  // title (up to two lines; from the right when it's in a right-to-left script)
   ctx.textBaseline = 'alphabetic';
   ctx.fillStyle = INK;
   ctx.font = `600 50px ${FONT}`;
   let y = BAND + 74;
+  const titleRtl = isRtlText(f.title);
   const titleLines = wrap(ctx, f.title || 'Untitled', W - PAD * 2);
+  ctx.direction = titleRtl ? 'rtl' : 'ltr';
+  ctx.textAlign = titleRtl ? 'right' : 'left';
   titleLines.slice(0, 2).forEach((t, i) => {
     const last = i === 1 && titleLines.length > 2;
-    ctx.fillText(last ? ellipsize(ctx, t + '…', W - PAD * 2) : t, PAD, y);
+    ctx.fillText(last ? ellipsize(ctx, t + '…', W - PAD * 2) : t, titleRtl ? W - PAD : PAD, y);
     y += 62;
   });
+  ctx.direction = 'ltr';
+  ctx.textAlign = 'left';
   y += 8;
 
   if (f.locked) {
@@ -197,8 +353,8 @@ export function drawFace(ctx, f) {
 
   // the start of the note
   const LH = 47;
-  ctx.font = `400 35px ${FONT}`;
-  let overflow = false;
+  ctx.font = bodyFont('');
+  let overflow = false, lastRtl = false;
   const lines = f.lines || [];
   if (!lines.length && f.empty) {
     ctx.fillStyle = INK_SOFT;
@@ -206,32 +362,35 @@ export function drawFace(ctx, f) {
   }
   outer:
   for (const l of lines) {
+    const x = String(l.x ?? '');
+    // right to left: the same layout, mirrored (the bullet, number or checkbox on the right)
+    const rtl = l.r === 1 || l.r === 0 ? !!l.r : isRtlText(x);
     const indent = PAD + Math.min(l.d || 0, 5) * 46;
-    const textX = l.k === 'p' ? indent : indent + 50;
-    const pieces = l.x.trim() || l.k !== 'p' ? wrap(ctx, l.x, W - PAD - textX) : [''];
+    const inset = l.k === 'p' ? indent : indent + 50;
+    const pieces = x.trim() || l.k !== 'p' ? wrapRuns(ctx, runsOf(l), W - PAD - inset) : [[]];
     for (let i = 0; i < pieces.length; i++) {
       if (y + LH > BODY_BOTTOM) { overflow = true; break outer; }
       y += LH;
+      lastRtl = rtl;
       if (i === 0) {
         ctx.fillStyle = INK;
+        ctx.font = bodyFont('');
         if (l.k === 'ul') {
           ctx.beginPath();
-          ctx.arc(indent + 18, y - 12, 7, 0, Math.PI * 2);
+          ctx.arc(rtl ? W - indent - 18 : indent + 18, y - 12, 7, 0, Math.PI * 2);
           ctx.fill();
         } else if (l.k === 'ol') {
-          ctx.textAlign = 'right';
-          ctx.fillText(`${l.n}.`, indent + 38, y);
+          ctx.direction = rtl ? 'rtl' : 'ltr';
+          ctx.textAlign = rtl ? 'left' : 'right';
+          ctx.fillText(`${l.n}.`, rtl ? W - indent - 38 : indent + 38, y);
+          ctx.direction = 'ltr';
           ctx.textAlign = 'left';
         } else if (l.k === 'check') {
-          drawCheckbox(ctx, indent + 2, y - 31, 32, l.done);
+          drawCheckbox(ctx, rtl ? W - indent - 34 : indent + 2, y - 31, 32, l.done);
         }
       }
       ctx.fillStyle = l.done ? INK_SOFT : INK;
-      ctx.fillText(pieces[i], textX, y);
-      if (l.done && pieces[i]) {
-        const w = ctx.measureText(pieces[i]).width;
-        ctx.fillRect(textX, y - 11, w, 3);
-      }
+      drawRuns(ctx, pieces[i], rtl ? W - inset : inset, y, rtl, l.done);
     }
   }
 
@@ -244,7 +403,9 @@ export function drawFace(ctx, f) {
     ctx.fillRect(0, BODY_BOTTOM - 90, W, 94);
     ctx.fillStyle = INK_SOFT;
     ctx.font = `600 40px ${FONT}`;
-    ctx.fillText('…', PAD, BODY_BOTTOM + 6);
+    ctx.textAlign = lastRtl ? 'right' : 'left';
+    ctx.fillText('…', lastRtl ? W - PAD : PAD, BODY_BOTTOM + 6);
+    ctx.textAlign = 'left';
   }
   ctx.restore();
 }

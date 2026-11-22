@@ -230,6 +230,43 @@ namespace NoteSpin
         public string NotesSearch(string termsJson) => Do(() =>
             lib.Current.Search(((Json.DeserializeObject(termsJson) as IEnumerable) ?? new object[0]).OfType<string>()));
 
+        /* ---------- the clipboard (a card's menu: Copy text, Copy as picture) ---------- */
+
+        /// <summary>Puts text on the clipboard (lines end in \n; Windows gets \r\n).</summary>
+        public string CopyText(string text) => Do(() =>
+        {
+            text = text ?? "";
+#if LINUX
+            GtkNative.ClipboardSetText(text);
+#else
+            text = text.Replace("\r\n", "\n").Replace("\n", "\r\n");
+            if (text.Length == 0) Clipboard.Clear();
+            else Clipboard.SetDataObject(new DataObject(DataFormats.UnicodeText, text), true, 5, 100);
+#endif
+        });
+
+        /// <summary>
+        /// Puts a picture on the clipboard: a PNG, given as base64. On Windows it goes on as PNG (for browsers, chat
+        /// apps and Office) and as a plain bitmap (for Paint and older apps).
+        /// </summary>
+        public string CopyPicture(string pngBase64) => Do(() =>
+        {
+            byte[] png = Convert.FromBase64String(pngBase64 ?? "");
+            if (png.Length == 0) throw new ArgumentException("There's no picture.");
+#if LINUX
+            GtkNative.ClipboardSetImage(png);
+#else
+            using (var ms = new MemoryStream(png))
+            using (var read = new System.Drawing.Bitmap(ms))
+            {
+                var data = new DataObject();
+                data.SetData(DataFormats.Bitmap, true, new System.Drawing.Bitmap(read));   // a copy: read needs its stream
+                data.SetData("PNG", false, new MemoryStream(png));
+                Clipboard.SetDataObject(data, true, 5, 100);   // kept after NoteSpin closes; tried again if another app has it open
+            }
+#endif
+        });
+
         /* ---------- copying notes from Microsoft Sticky Notes (which is only read, never changed) ---------- */
 
         /// <summary>
@@ -376,16 +413,19 @@ namespace NoteSpin
         });
 
         /// <summary>
-        /// A message for the main page, {type, ...} or {id} answering NoteWinClose. Changed categories are passed
-        /// on to the other note windows too, so their category lists are up to date.
+        /// A message for the main page, {type, ...} or {id} answering NoteWinClose. Changed categories, and a changed
+        /// text size, are passed on to the other note windows too, so they show them as well.
         /// </summary>
         public string ToMain(string json) => Do(() =>
         {
             var w = NotePageOnly();
             var m = Obj(json);
             form.Post(m);
-            if (m.TryGetValue("type", out object t) && t as string == "categoriesChanged")
+            string type = m.TryGetValue("type", out object t) ? t as string : null;
+            if (type == "categoriesChanged")
                 form.SendToNotes(new Dictionary<string, object> { ["type"] = "categoriesChanged" }, w);
+            else if (type == "textSize" && m.TryGetValue("size", out object size))
+                form.SendToNotes(new Dictionary<string, object> { ["type"] = "textSize", ["size"] = size }, w);
         });
 
 #if LINUX
@@ -433,6 +473,8 @@ namespace NoteSpin
                 case "NoteSave": resultJson = NoteSave(StrArg(a, 0)); return true;
                 case "NoteDelete": resultJson = NoteDelete(StrArg(a, 0)); return true;
                 case "NotesSearch": resultJson = NotesSearch(StrArg(a, 0)); return true;
+                case "CopyText": resultJson = CopyText(StrArg(a, 0)); return true;
+                case "CopyPicture": resultJson = CopyPicture(StrArg(a, 0)); return true;
                 case "StickyNotesRead": resultJson = StickyNotesRead(); return true;
                 case "StickyNotesCopy": resultJson = StickyNotesCopy(StrArg(a, 0)); return true;
                 case "CategoriesAll": resultJson = CategoriesAll(); return true;

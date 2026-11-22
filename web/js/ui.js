@@ -2,6 +2,16 @@
 
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 
+/**
+ * The letter of a shortcut key (Ctrl+B → 'b'), lower case, or ''. With a Hebrew, Arabic, Greek… keyboard layout
+ * the key gives that script's letter, so it's the key's place on a US keyboard instead (as the browser's own
+ * shortcuts do).
+ */
+export function letterKey(e) {
+  if (/^[a-z]$/i.test(e.key)) return e.key.toLowerCase();
+  return /^Key[A-Z]$/.test(e.code || '') ? e.code.slice(3).toLowerCase() : '';
+}
+
 let openDialogs = 0;
 export const dialogOpen = () => openDialogs > 0;
 const cancellers = new Set();
@@ -139,8 +149,12 @@ export function toast(message, {action = null, timeout = 4200, kind = ''} = {}) 
 
 let closeMenu = null;
 
-/** items: {label, hint, checked, disabled, danger, onClick} or '-' for a divider. */
-export function menu(anchor, items, {align = 'left'} = {}) {
+/**
+ * items: {label, hint, checked, disabled, danger, onClick} or '-' for a divider.
+ * The menu drops down from anchor, or (at: {x, y}) opens at that point, inside bounds (a rectangle; else the
+ * window); anchor then only gets the focus back when it closes.
+ */
+export function menu(anchor, items, {align = 'left', at = null, bounds = null} = {}) {
   closeMenu?.();
   const el = document.createElement('div');
   el.className = 'menu';
@@ -158,18 +172,32 @@ export function menu(anchor, items, {align = 'left'} = {}) {
     el.append(b);
   }
   document.body.append(el);
-  const r = anchor.getBoundingClientRect();
   const mw = el.offsetWidth, mh = el.offsetHeight;
-  let x = align === 'right' ? r.right - mw : r.left;
-  let y = r.bottom + 6;
-  if (y + mh > innerHeight - 8) y = Math.max(8, r.top - mh - 6);
-  x = Math.max(8, Math.min(x, innerWidth - mw - 8));
+  let x, y;
+  if (at) {
+    const b = bounds || {left: 0, top: 0, right: innerWidth, bottom: innerHeight};
+    // 8 pixels from the edges, less where it's tight (the hidden-frame window's box can be just wider than a menu)
+    const px = Math.min(8, Math.max(0, (b.right - b.left - mw) / 2)), py = Math.min(8, Math.max(0, (b.bottom - b.top - mh) / 2));
+    x = at.x + 2;
+    y = at.y + 2;
+    if (x + mw > b.right - px) x = at.x - mw - 2;     // no room to the right: to the left of the point
+    if (y + mh > b.bottom - py) y = b.bottom - py - mh;
+    x = Math.max(b.left + px, Math.min(x, b.right - mw - px));
+    y = Math.max(b.top + py, y);
+  } else {
+    const r = anchor.getBoundingClientRect();
+    x = align === 'right' ? r.right - mw : r.left;
+    y = r.bottom + 6;
+    if (y + mh > innerHeight - 8) y = Math.max(8, r.top - mh - 6);
+    x = Math.max(8, Math.min(x, innerWidth - mw - 8));
+  }
   el.style.left = x + 'px';
   el.style.top = y + 'px';
   const items$ = [...el.querySelectorAll('.menu-item:not(:disabled)')];
   items$[0]?.focus();
 
-  const onDown = e => { if (!el.contains(e.target) && e.target !== anchor && !anchor.contains(e.target)) close(); };
+  // a press outside closes it (one on the anchor too, when it opened at a point: that's somewhere else on it)
+  const onDown = e => { if (!el.contains(e.target) && (at || (e.target !== anchor && !anchor.contains(e.target)))) close(); };
   const onKey = e => {
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); anchor.focus(); return; }
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {

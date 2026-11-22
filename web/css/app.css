@@ -214,6 +214,13 @@ body.frameless #panel { inset: var(--strip) auto 0 var(--shown-left); transition
 body.frameless:not(.bar-out) #panel { display: none; }
 body.frameless .ed-layer, body.frameless .dlg-back { inset: var(--shown-top) 0 0 var(--shown-left); }
 body.frameless .dlg { max-height: calc(100vh - var(--shown-top) - 32px); }
+/* a note open over the cards: around it is the desktop, so nothing darkens that (the cards behind it dim instead),
+   and its shadow is short enough to end inside the window rather than be cut off at its edge. The toolbar, when
+   it's out, dims too, as it does in a window with its frame. */
+body.frameless .ed-layer { background: transparent; }
+body.frameless .ed-card { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.3); }
+body.frameless :is(#stage canvas, #panel, .title-strip) { transition: filter 0.28s; }
+body.frameless.note-open :is(#stage canvas, #panel, .title-strip) { filter: brightness(0.5); }
 
 body.frameless.bar-out .title-strip {
   position: fixed; inset: 0 0 auto var(--shown-left); z-index: 6;
@@ -318,6 +325,7 @@ body.frameless.bar-out .frame-edges { display: block; }
   overflow: hidden;
   user-select: text;
   transform-origin: center;
+  container-type: inline-size;   /* the toolbar tightens up in a narrow note (below) */
 }
 .ed-band {
   display: flex; align-items: center; gap: 6px;
@@ -369,7 +377,7 @@ body.frameless.bar-out .frame-edges { display: block; }
 #edDelete:hover { color: #9b1c17; }
 
 .ed-tools {
-  display: flex; align-items: center; gap: 3px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 3px; row-gap: 2px;
   padding: 6px 12px;
   border-bottom: 1px solid rgba(0, 0, 0, 0.07);
   background: rgba(255, 255, 255, 0.18);
@@ -397,7 +405,7 @@ body.frameless.bar-out .frame-edges { display: block; }
   position: relative;
   min-height: 100%;
   outline: none;
-  font-size: 16.5px;
+  font-size: calc(16.5px * var(--text-size, 1));   /* the text size (Settings), for every note */
   line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -410,14 +418,16 @@ body.frameless.bar-out .frame-edges { display: block; }
   pointer-events: none;
 }
 .ed-body p { margin: 0 0 0.35em; }
-.ed-body ul, .ed-body ol { margin: 0.1em 0 0.45em; padding-left: 1.7em; }
-.ed-body li { margin: 0.12em 0; padding-left: 0.15em; }
+/* a list item's indent is its own (at its start: the left, or the right when it reads right to left), so a bullet,
+   number or checkbox sits on the side its line starts from */
+.ed-body ul, .ed-body ol { margin: 0.1em 0 0.45em; padding: 0; }
+.ed-body li { margin: 0.12em 0; margin-inline-start: 1.7em; padding-inline-start: 0.15em; }
 .ed-body li > ul, .ed-body li > ol, .ed-body ul > ul, .ed-body ol > ol, .ed-body ul > ol, .ed-body ol > ul { margin: 0.1em 0; }
-.ed-body ul.check { list-style: none; padding-left: 0.1em; }
-.ed-body ul.check > li { position: relative; padding-left: 1.75em; }
+.ed-body ul.check { list-style: none; }
+.ed-body ul.check > li { position: relative; margin-inline-start: 0.1em; padding-inline-start: 1.75em; }
 .ed-body ul.check > li::before {
   content: "";
-  position: absolute; left: 0.1em; top: 0.3em;
+  position: absolute; inset-inline-start: 0.1em; top: 0.3em;
   width: 1.05em; height: 1.05em;
   border: 1.7px solid rgba(36, 38, 44, 0.62);
   border-radius: 4px;
@@ -457,11 +467,17 @@ body.windowed { background: #fff2a6; }
 .windowed .ed-tools button { width: 29px; height: 27px; }
 .windowed .ed-lockinfo > span { display: none; }   /* the icon says it; the words are its tooltip */
 .windowed .ed-scroll { padding: 12px 16px 20px; }
-.windowed .ed-body { font-size: 15.5px; }
+.windowed .ed-body { font-size: calc(15.5px * var(--text-size, 1)); }
 .windowed .ed-foot { padding: 5px 10px 6px; }
 .windowed .toasts { position: fixed; bottom: 12px; }
 .windowed .toast { max-width: calc(100vw - 24px); }
 @media (max-width: 330px) { .windowed .ed-status { display: none; } }
+/* a narrow note: smaller toolbar buttons, so all of them fit on one row down to the note window's smallest size */
+@container (max-width: 380px) {
+  .ed-card .ed-tools { gap: 0; padding-inline: 6px; }
+  .ed-card .ed-tools button { width: 25px; }
+  .ed-card .ed-sep { margin: 0 2px; }
+}
 
 /* where a note window can be dropped to put the note back over the cards */
 .drop-zone {
@@ -566,6 +582,14 @@ label.check input { accent-color: var(--accent); width: 15px; height: 15px; }
 .range-row input { flex: 1; min-width: 0; max-width: 260px; accent-color: var(--accent); }
 .range-row output { min-width: 3em; font-variant-numeric: tabular-nums; }
 .range-row.off { opacity: 0.45; }
+.size-row { margin: 0 0 8px; }
+.size-row > span { min-width: 4.6em; }
+.size-row .btn { padding: 4px 10px; font-size: 12.5px; }
+/* the text size, as a note shows it */
+.dlg .size-sample {
+  margin: 0 0 8px; padding: 6px 12px; border-radius: 6px;
+  color: #24262c; font-size: calc(16.5px * var(--text-size, 1)); line-height: 1.45; overflow-wrap: anywhere;
+}
 .dlg-back.peek { background: transparent; }
 
 .cat-list { display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow: auto; padding-right: 2px; }

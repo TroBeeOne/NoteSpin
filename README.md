@@ -49,7 +49,7 @@ What you see:
 
 | | |
 |---|---|
-| **The front card** | The note you're on: its title, and the start of the note with its lists and checkboxes. If there's more than fits, it fades out at the bottom. A locked note shows only its title and a lock. |
+| **The front card** | The note you're on: its title, and the start of the note with its lists, checkboxes and bold, italic, underlined or struck-through words. Hebrew, Arabic and other right-to-left lines start from the right, as in the note. If there's more than fits, it fades out at the bottom. A locked note shows only its title and a lock. |
 | **The band across the top** | The note's category, in that category's colour, and (quieter) when the note was last edited: *Today*, *Yesterday*, *Nov 12*, *Nov 12, 2025*. |
 | **The tab on the right** | In A–Z order, the first letter of the title (so you can see where you are in the alphabet). In Recent order there's no tab; the date on the band says it. On category cards, the number of notes. |
 | **The cards behind** | The next three notes: the two right behind show their band and the first line of their title, the third just its band. Click one to bring it to the front. (In the Categories view only the bands show: they carry the category's name already.) |
@@ -69,10 +69,24 @@ Moving around:
   between the last and the first, so you can tell where the end is: turning past it, the front is empty for a
   moment. (The cards behind the last note are the first ones, standing just as the others do.)
 
+**Right-click a card** for its menu (on a touch screen, press and hold it; from the keyboard, the Menu key or
+Shift+F10 for the front card). A card behind the front one comes forward first.
+
+| | |
+|---|---|
+| **Open** | Opens the note (for a note that's out in its own window: brings that window forward). |
+| **Open in its own window** | Opens it in a window of its own, whatever the setting. |
+| **Copy text** | The note's text, to paste anywhere: a line per line, list items marked •, 1., ☐ or ☑ and indented by level. Not for a locked note. |
+| **Copy as picture** | A picture of the card, as on the wheel, to paste into a message, document or image editor. |
+| **Delete…** | Deletes the note, after asking, with **Undo** in the message that follows. A note that's out in its own window is closed there first (saved). |
+
+On a category card the menu has *Open* and *Copy as picture*.
+
 The **sound** button turns the click of falling cards on and off. The arrow at the top of the panel folds it
 down to a strip of icons (it folds by itself in a narrow window). Folded, one button under the search switches
-between **All notes** and **Categories**: its icon shows which is on, a stack of cards or a grid. In a window
-too short for the whole strip, it scrolls. Everything sizes to the window.
+between **All notes** and **Categories**: its icon shows which is on, a stack of cards or a grid. **Ctrl+G** does
+the same from the keyboard, with the panel folded or the toolbar hidden too. In a window too short for the whole
+strip, it scrolls. Everything sizes to the window.
 
 **See-through background.** *Settings → Background → See-through background around the cards* lets the
 desktop, and any window behind NoteSpin, show through the space around the cards. The **Opacity** slider sets
@@ -103,8 +117,19 @@ frame comes back around the panel and cards.
 ## Writing notes
 
 - **The first line is the title.** It's what the card shows in large type, and what A–Z order sorts by.
-- **One font, no formatting**, except lists. There are three kinds, from the toolbar or by typing at the start
-  of a line:
+- **Bold, italic, underline and strikethrough**, from the first four toolbar buttons or **Ctrl+B**, **Ctrl+I**,
+  **Ctrl+U** and **Ctrl+T** (as in Microsoft Sticky Notes). Select words first, or press one and type. They're
+  kept with the note and show on its card. Otherwise there's one font and size, so every note looks the same.
+- **Text size.** To make the text in notes bigger or smaller, press **Ctrl+Plus** or **Ctrl+Minus** in a note
+  (or hold Ctrl and turn the mouse wheel over it), or use *Settings → Notes → Text size*: from 70% to 200%.
+  **Ctrl+0** sets it back to 100%. It's one size for every note, in every window, and NoteSpin remembers it.
+  It's how you see the notes, not part of them, so the cards, copied text and backups stay as they were.
+- **Right-to-left text.** A line in Hebrew, Arabic or another right-to-left script reads from the right by itself,
+  with its bullet, number or checkbox on the right; the next line goes back to the left if it's in English, so
+  notes can mix both. To set a line's direction yourself on Windows, press **Ctrl+Right Shift** (right to left)
+  or **Ctrl+Left Shift** (left to right) in it; NoteSpin keeps that too, and a new line started from it carries on
+  the same way.
+- **Lists.** There are three kinds, from the toolbar or by typing at the start of a line:
 
   | List | Toolbar | Or type |
   |---|---|---|
@@ -119,15 +144,16 @@ frame comes back around the panel and cards.
   - **Click a checkbox** to tick it, or press **Ctrl+Enter** on the item.
   - Pressing the same list button again turns the list back into ordinary lines; another list button
     changes its kind.
-- **Pasting** keeps the text, its lines and its lists, and drops fonts, sizes, colours, links and pictures.
+- **Pasting** keeps the text, its lines, its lists, and bold, italic, underline and strikethrough, and drops
+  fonts, sizes, colours, links and pictures.
 - **Text files**: drop a `.txt` file (or several) from File Explorer onto the cards, and NoteSpin asks whether
   to make a note of each. The first line becomes the title and every line a paragraph, spaces and tabs kept;
   the notes go in General (change the category in the note). One note opens straight away. Files saved as
   UTF-8, UTF-16 or the older "ANSI" all read correctly. A file over 1 MB, an empty one, or one that isn't
   plain text is left out, saying why. Dropping does nothing while a note is open over the cards.
 - **Saving** happens as you type (the band says *Saved*). Closing the window saves anything still waiting.
-- **Deleting**: the bin button in a note. A note closed with nothing in it is deleted automatically, with
-  **Undo** in the message that appears.
+- **Deleting**: the bin button in a note, or *Delete…* in its card's menu (right-click the card; with **Undo**).
+  A note closed with nothing in it is deleted automatically, with **Undo** in the message that appears.
 
 ## Notes in their own windows
 
@@ -170,7 +196,8 @@ deleted.
 
 - **Show: All notes** puts every note on the wheel. **Show: Categories** puts one card per category on it,
   listing the notes in it; open one (click it, or Enter) to see only that category's notes. **Esc**,
-  **Backspace** or the *Categories* link in the panel goes back.
+  **Backspace** or the *Categories* link in the panel goes back. **Ctrl+G** switches between all notes and the
+  categories (from one category's notes, to all notes).
 - **Order: A–Z** sorts by title; **Order: Recent** puts the most recently edited first. In the categories
   view it sorts the categories the same way.
 - **Search** (Ctrl+F, or the box in the panel) narrows the wheel to the notes containing every word you type,
@@ -307,8 +334,13 @@ same web interface and `.notespin` SQLite notebook format as Windows.
 | Enter or Space | Open the front card (or the category) |
 | Ctrl+N | New note (in a note window: a new note in another window) |
 | Ctrl+F | Search |
+| Ctrl+G | All notes ↔ Categories |
+| Menu key or Shift+F10 | The front card's menu (open, copy, delete) |
 | Esc | Close the note · clear the search · back to the categories |
 | Backspace | Back to the categories |
+| *In a note:* Ctrl+Plus / Ctrl+Minus / Ctrl+0 | Bigger / smaller text / back to 100% (every note) |
+| *In a note:* Ctrl+B / Ctrl+I / Ctrl+U / Ctrl+T | Bold / italic / underline / strikethrough |
+| *In a note (Windows):* Ctrl+Right Shift / Ctrl+Left Shift | This line reads right to left / left to right |
 | *In a note:* Tab / Shift+Tab | Move a list item in / out |
 | *In a note:* Ctrl+Enter | Tick or untick a checkbox |
 | *In a note:* Ctrl+S | Save now (it saves by itself anyway) |
@@ -316,10 +348,12 @@ same web interface and `.notespin` SQLite notebook format as Windows.
 | Mouse / touch | |
 |---|---|
 | Wheel | One card per notch |
+| Ctrl+wheel over a note | Bigger or smaller text |
 | Drag (swipe) up or down | Turn the wheel; flick to spin; press to stop |
 | Drag sideways | Look at the wheel from another side (not with the spinner base hidden) |
 | Click (tap) the front card | Open it |
 | Click (tap) a card behind | Bring it to the front |
+| Right-click a card (press and hold) | Its menu: open, copy its text or a picture of it, delete it |
 | Drag a note's top strip out of the window | Give it a window of its own |
 | Drop a note window on the front card | Put the note back |
 | Drop a `.notespin` file on the window | Import it |

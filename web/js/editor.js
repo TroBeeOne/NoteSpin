@@ -1,11 +1,59 @@
-// The note editor: a sticky note in front of the cards, or filling the note window (windowed). One font,
-// and only bulleted, numbered and checkbox lists. It saves as you type; a locked note is encrypted before
-// every save and locks again (its password forgotten) when it closes. A note closed with nothing in it is deleted.
+// The note editor: a sticky note in front of the cards, or filling the note window (windowed). One font, in one
+// size for every note (the text size), with bold, italic, underline and strikethrough, and bulleted, numbered and
+// checkbox lists. Each line reads left to
+// right or right to left as its first letter says, unless it's been set (the browser's Ctrl+Right Shift / Ctrl+Left
+// Shift). It saves as you type; a locked note is encrypted before every save and locks again (its password
+// forgotten) when it closes. A note closed with nothing in it is deleted.
 // A note can move between the two windows (exportState, then openState in the other one); only one is open at a time.
 
-import {parse, parseHtml, analyze, toHtml, textToBlocks, bandColor, pickColor, GENERAL_ID} from './notes.js';
+import {parse, parseHtml, analyze, toHtml, toText, inlineHtml, hasStyles, textToBlocks, bandColor, pickColor, GENERAL_ID} from './notes.js';
 import {LockSession, WrongPassword} from './crypto.js';
-import {dialog, confirmDlg, toast, esc} from './ui.js';
+import {dialog, confirmDlg, toast, esc, letterKey, dialogOpen} from './ui.js';
+
+// the text styles: the toolbar's commands, and their keys (Ctrl+T strikes through, as in Microsoft Sticky Notes)
+const STYLE_KEYS = {b: 'bold', i: 'italic', u: 'underline', t: 'strikeThrough'};
+const STYLE_CMDS = Object.values(STYLE_KEYS);
+
+/* ---------- the text size ----------
+   How big every note's text is, in % (Settings → Notes, or Ctrl+Plus, Ctrl+Minus and Ctrl+0 in a note): its text,
+   bullets, numbers and checkboxes. The toolbar and the cards stay as they are. It's the reader's setting, kept in
+   NoteSpin's settings, not in the notes; each window shows it, and tells the others when it's changed there. */
+
+export const TEXT_SIZES = [70, 80, 90, 100, 110, 125, 150, 175, 200];
+let shownSize = null;
+
+/** The text size in use, in %. */
+export function textSize() {
+  if (shownSize == null) {
+    const v = parseInt(NS.prefGet('textSize'), 10);
+    shownSize = TEXT_SIZES.includes(v) ? v : 100;
+  }
+  return shownSize;
+}
+
+/** Shows notes' text at pct % (as it starts, or after it was changed in another window). */
+export function showTextSize(pct) {
+  pct = +pct;
+  if (!TEXT_SIZES.includes(pct)) return;
+  shownSize = pct;
+  document.documentElement.style.setProperty('--text-size', String(pct / 100));
+}
+
+/** Changes the text size: shown here and kept in the settings (the page tells its other windows). */
+export function setTextSize(pct) {
+  if (!TEXT_SIZES.includes(+pct)) return;
+  showTextSize(pct);
+  NS.prefSet('textSize', String(pct));
+}
+
+// Ctrl and +, - or 0 (on the number pad too): a step bigger (1), smaller (-1), or back to 100% (0); else null
+function sizeKey(e) {
+  if (!e.ctrlKey || e.altKey || e.metaKey) return null;   // not with Alt: Ctrl+Alt is AltGr on some keyboards
+  if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd') return 1;
+  if (e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract') return -1;
+  if (e.key === '0' || e.code === 'Digit0') return 0;
+  return null;
+}
 
 const SAVE_DELAY = 650;
 const $ = id => document.getElementById(id);
@@ -27,6 +75,11 @@ const MARKUP = `<div id="editorLayer" class="ed-layer" hidden>
       <button id="edClose" class="ed-btn" title="Close (Esc)" aria-label="Close"><svg><use href="#i-x"/></svg></button>
     </header>
     <div class="ed-tools">
+      <button data-cmd="bold" title="Bold (Ctrl+B)" aria-label="Bold"><svg><use href="#i-bold"/></svg></button>
+      <button data-cmd="italic" title="Italic (Ctrl+I)" aria-label="Italic"><svg><use href="#i-italic"/></svg></button>
+      <button data-cmd="underline" title="Underline (Ctrl+U)" aria-label="Underline"><svg><use href="#i-underline"/></svg></button>
+      <button data-cmd="strikeThrough" title="Strikethrough (Ctrl+T)" aria-label="Strikethrough"><svg><use href="#i-strike"/></svg></button>
+      <span class="ed-sep"></span>
       <button data-cmd="ul" title="Bulleted list (type - and a space)" aria-label="Bulleted list"><svg><use href="#i-ul"/></svg></button>
       <button data-cmd="ol" title="Numbered list (type 1. and a space)" aria-label="Numbered list"><svg><use href="#i-ol"/></svg></button>
       <button data-cmd="check" title="Checklist (type [] and a space; Ctrl+Enter ticks)" aria-label="Checklist"><svg><use href="#i-check"/></svg></button>
@@ -106,6 +159,9 @@ function outdentItem(li) {
     return li;
   }
   const p = document.createElement('p');
+  // it keeps its reading direction, if it was set
+  if (li.hasAttribute('dir')) p.setAttribute('dir', li.getAttribute('dir'));
+  if (li.style.direction) p.style.direction = li.style.direction;
   const subs = [];
   for (const n of [...li.childNodes]) { if (isList(n)) subs.push(n); else p.append(n); }
   if (!p.textContent && !p.querySelector('br')) p.append(document.createElement('br'));
@@ -217,6 +273,7 @@ export class Editor {
     this.timer = 0;
     this.catPick = -1;
     document.execCommand('defaultParagraphSeparator', false, 'p');
+    showTextSize(textSize());
     this.wire();
   }
 
@@ -250,8 +307,28 @@ export class Editor {
     this.layer.addEventListener('keydown', e => {
       if (e.key === 'Escape' && !this.catList.hidden) return;
       if (e.key === 'Escape') { e.preventDefault(); this.close(); }
-      if (e.key === 's' && e.ctrlKey) { e.preventDefault(); this.save(); }
+      if (e.ctrlKey && letterKey(e) === 's') { e.preventDefault(); this.save(); }
     });
+
+    // the text size: Ctrl+Plus, Ctrl+Minus, Ctrl+0 with a note open (anywhere else the keys do nothing, rather
+    // than zoom the page), and Ctrl+wheel (or a touchpad's pinch) over the note
+    document.addEventListener('keydown', e => {
+      const k = sizeKey(e);
+      if (k == null) return;
+      e.preventDefault();
+      if (this.isOpen && !dialogOpen()) this.stepTextSize(k);
+    });
+    let wheelSum = 0, wheelAt = 0;
+    this.card.addEventListener('wheel', e => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      if (e.timeStamp - wheelAt > 400) wheelSum = 0;   // a new turn of the wheel
+      wheelAt = e.timeStamp;
+      wheelSum += e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;   // lines or pixels
+      if (Math.abs(wheelSum) < 50) return;
+      this.stepTextSize(wheelSum < 0 ? 1 : -1);
+      wheelSum = 0;
+    }, {passive: false});
 
     // category: type a name or pick one; blank is General
     const ci = this.catInput;
@@ -305,12 +382,14 @@ export class Editor {
     this.newColor = null;
     const clean = toHtml(parseHtml(html || ''));
     this.body.innerHTML = clean || '<p><br></p>';
+    this.followText();
     this.paintCategory();
     this.setStatus('');
     this.showMeta();
     this.updateLockUi();
     this.updateEmpty();
     this.layer.hidden = false;
+    document.body.classList.add('note-open');
     this.card.style.transform = '';
     if (!this.windowed) {
       this.app.spinner.enabled = false;
@@ -346,6 +425,7 @@ export class Editor {
 
   hide() {
     this.layer.hidden = true;
+    document.body.classList.remove('note-open');
     this.body.innerHTML = '';
     this.session = null;   // locked notes lock again
     this.card.style.transform = '';
@@ -445,8 +525,9 @@ export class Editor {
   animate(rect, opening) {
     const card = this.card;
     const ease = 'cubic-bezier(.2,.8,.2,1)';
+    // the dimmed background fades in or out (none with the window frame hidden: see the CSS)
     const fadeLayer = this.layer.animate(
-      [{backgroundColor: 'rgba(12,14,18,0)'}, {backgroundColor: 'rgba(12,14,18,.5)'}],
+      [{backgroundColor: 'rgba(12,14,18,0)'}, {backgroundColor: getComputedStyle(this.layer).backgroundColor}],
       {duration: 280, easing: ease, direction: opening ? 'normal' : 'reverse', fill: 'forwards'});
     let frames = [{opacity: 0, transform: 'translateY(14px) scale(.97)'}, {opacity: 1, transform: 'none'}];
     if (rect && rect.width > 20) {
@@ -641,6 +722,7 @@ export class Editor {
 
   onInput(e) {
     this.wrapLooseText();
+    this.followText();
     if (e.inputType === 'insertParagraph') {
       // a new checklist item starts unticked
       const li = this.closest('li');
@@ -653,6 +735,12 @@ export class Editor {
 
   updateEmpty() {
     this.body.classList.toggle('empty', !this.body.textContent.trim() && !this.body.querySelector('li'));
+  }
+
+  // Lines and list items whose direction isn't set read the way their first letter does (Hebrew or Arabic: from the
+  // right, with the bullets, numbers and checkboxes on the right too). Not stored: dir="auto" reads as no direction.
+  followText() {
+    for (const el of this.body.querySelectorAll('p:not([dir]), li:not([dir]), div:not([dir])')) el.setAttribute('dir', 'auto');
   }
 
   // Text typed straight into the editor (after everything was deleted) goes into a paragraph
@@ -685,15 +773,28 @@ export class Editor {
 
   updateTools() {
     const kind = this.listKind();
+    // a ticked checklist item is struck through already: that isn't the strikethrough style
+    const ticked = !!this.closest('ul.check > li.done');
     this.layer.querySelectorAll('.ed-tools [data-cmd]').forEach(b => {
-      if (['ul', 'ol', 'check'].includes(b.dataset.cmd)) b.classList.toggle('on', b.dataset.cmd === kind);
-      if (b.dataset.cmd === 'indent' || b.dataset.cmd === 'outdent') b.disabled = !kind;
+      const c = b.dataset.cmd;
+      if (['ul', 'ol', 'check'].includes(c)) b.classList.toggle('on', c === kind);
+      if (c === 'indent' || c === 'outdent') b.disabled = !kind;
+      if (STYLE_CMDS.includes(c)) {
+        let on = false;
+        try { on = document.queryCommandState(c); } catch { /* no selection */ }
+        b.classList.toggle('on', on && !(ticked && c === 'strikeThrough'));
+        b.setAttribute('aria-pressed', String(b.classList.contains('on')));
+      }
     });
   }
 
   command(cmd) {
     this.body.focus();
-    if (cmd === 'indent' || cmd === 'outdent') this.indent(cmd === 'outdent');
+    if (STYLE_CMDS.includes(cmd)) {
+      document.execCommand('styleWithCSS', false, false);   // <b>, <i>, <u>, <strike>: what the note keeps
+      document.execCommand(cmd);
+      this.updateTools();
+    } else if (cmd === 'indent' || cmd === 'outdent') this.indent(cmd === 'outdent');
     else this.applyList(cmd);
   }
 
@@ -769,7 +870,30 @@ export class Editor {
     this.markDirty();
   }
 
+  // The text size a step bigger (step 1) or smaller (-1), or back to 100% (0); it shows for a moment what it is.
+  // The note stays at the same place in its text.
+  stepTextSize(step) {
+    const now = textSize(), i = TEXT_SIZES.indexOf(now);
+    const pct = step === 0 ? 100 : TEXT_SIZES[Math.max(0, Math.min(TEXT_SIZES.length - 1, i + step))];
+    if (pct !== now) {
+      const sc = this.card.querySelector('.ed-scroll'), at = sc.scrollHeight ? sc.scrollTop / sc.scrollHeight : 0;
+      setTextSize(pct);
+      sc.scrollTop = at * sc.scrollHeight;
+      this.app.textSizeChanged?.(pct);
+    }
+    const end = pct === TEXT_SIZES[0] ? ' (the smallest)' : pct === TEXT_SIZES[TEXT_SIZES.length - 1] ? ' (the largest)' : '';
+    this.sizeToast?.();
+    this.sizeToast = toast(`Text size ${pct}%${end}`, {timeout: 1600});
+  }
+
   onKey(e) {
+    // Ctrl+B, Ctrl+I, Ctrl+U, Ctrl+T: bold, italic, underline, strikethrough (handled here, so it's the same in every
+    // browser engine; not with Alt, which is AltGr on some keyboards)
+    if (e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey && STYLE_KEYS[letterKey(e)]) {
+      e.preventDefault();
+      this.command(STYLE_KEYS[letterKey(e)]);
+      return;
+    }
     if (e.key === 'Tab') {
       e.preventDefault();
       if (this.listKind()) this.indent(e.shiftKey);
@@ -823,18 +947,21 @@ export class Editor {
     }
   }
 
-  // Clicking a checkbox ticks it (the box sits in the item's left padding)
+  // Clicking a checkbox ticks it (the box sits in the item's padding at its start: the left, or the right when it
+  // reads right to left)
   onCheckboxClick(e) {
     const li = e.target.closest?.('li');
     if (!li || e.target !== li || !li.parentElement?.classList.contains('check')) return;
-    const pad = parseFloat(getComputedStyle(li).paddingLeft) || 26;
-    if (e.clientX - li.getBoundingClientRect().left > pad) return;
+    const cs = getComputedStyle(li), rtl = cs.direction === 'rtl', r = li.getBoundingClientRect();
+    const pad = parseFloat(rtl ? cs.paddingRight : cs.paddingLeft) || 26;
+    if ((rtl ? r.right - e.clientX : e.clientX - r.left) > pad) return;
     e.preventDefault();
     li.classList.toggle('done');
     this.markDirty();
   }
 
-  // Pasted text keeps its lines and lists but loses its fonts, colours, links and pictures
+  // Pasted text keeps its lines, lists, bold, italic, underline and strikethrough but loses its fonts, sizes,
+  // colours, links and pictures
   onPaste(e) {
     const dt = e.clipboardData;
     if (!dt) return;
@@ -842,8 +969,12 @@ export class Editor {
     const html = dt.getData('text/html'), text = dt.getData('text/plain');
     let blocks = html ? parseHtml(html, {paste: true}) : textToBlocks(text);
     if (!blocks.length) return;
-    if (blocks.length === 1 && blocks[0].t === 'p') document.execCommand('insertText', false, text.replace(/\r?\n/g, ' ') || blocks[0].inl.filter(x => typeof x === 'string').join(''));
-    else document.execCommand('insertHTML', false, toHtml(blocks));
+    document.execCommand('styleWithCSS', false, false);
+    if (blocks.length === 1 && blocks[0].t === 'p') {
+      // part of a line goes into the line (not as a paragraph of its own)
+      if (hasStyles(blocks)) document.execCommand('insertHTML', false, inlineHtml(blocks[0].inl));
+      else document.execCommand('insertText', false, text.replace(/\r?\n/g, ' ') || toText(blocks).replace(/\n/g, ' '));
+    } else document.execCommand('insertHTML', false, toHtml(blocks));
   }
 
   onDrop(e) {
