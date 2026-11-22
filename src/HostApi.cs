@@ -119,9 +119,7 @@ namespace NoteSpin
             form.SetNarrow(hidden);
         });
 
-#if !LINUX
-        /* ---------- the window frame hidden (Settings; see MainForm) ----------
-           The Linux build doesn't have these yet: there, FrameInfo answers null and the page leaves the setting out. */
+        /* ---------- the window frame hidden (Settings; see MainForm) ---------- */
 
         /// <summary>For the page as it starts (synchronously): {hidden}, whether the window started without its frame.</summary>
         public string FrameInfo() => Do(() =>
@@ -161,7 +159,6 @@ namespace NoteSpin
             MainPageOnly();
             form.WindowCommand(what);
         });
-#endif
 
         public string ShowFolder(string which) => Do(() =>
         {
@@ -412,6 +409,11 @@ namespace NoteSpin
                 case "ShowLicenses": resultJson = ShowLicenses(); return true;
                 case "SeeThroughSet": resultJson = SeeThroughSet(BoolArg(a, 0)); return true;
                 case "BaseHiddenSet": resultJson = BaseHiddenSet(BoolArg(a, 0)); return true;
+                case "FrameInfo": resultJson = FrameInfo(); return true;
+                case "FrameSet": resultJson = FrameSet(BoolArg(a, 0), DblArg(a, 1), DblArg(a, 2), DblArg(a, 3), DblArg(a, 4), DblArg(a, 5)); return true;
+                case "FrameDrag": resultJson = FrameDrag(BoolArg(a, 0)); return true;
+                case "FrameSize": resultJson = FrameSize(StrArg(a, 0), BoolArg(a, 1)); return true;
+                case "FrameCommand": resultJson = FrameCommand(StrArg(a, 0)); return true;
                 case "ShowFolder": resultJson = ShowFolder(StrArg(a, 0)); return true;
                 case "NbState": resultJson = NbState(); return true;
                 case "NbOpen": resultJson = NbOpen(StrArg(a, 0)); return true;

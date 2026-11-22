@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -16,7 +17,13 @@ namespace NoteSpin
     {
         static readonly GdkRGBA Bg = new GdkRGBA(17 / 255.0, 19 / 255.0, 24 / 255.0, 1.0);
         static readonly GdkRGBA Transparent = new GdkRGBA(0, 0, 0, 0);
+        static readonly bool IsWayland =
+            !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WAYLAND_DISPLAY")) &&
+            !string.Equals(Environment.GetEnvironmentVariable("GDK_BACKEND"), "x11", StringComparison.OrdinalIgnoreCase);
+
         const int MinWidth = 560, MinHeight = 420, NarrowWidth = 340;
+        const int MinCardsWidth = 360, MinCardsNarrowWidth = 240, MinCardsHeight = 280;
+        const string FloatKey = "app:float";
 
         readonly Settings settings;
         readonly Library lib;
@@ -31,12 +38,16 @@ namespace NoteSpin
         Task<NoteWindow> making;
         NoteWindow lastShown;
         int windowCount;
-        bool narrow, seeThrough, rgbaAvailable;
+        bool narrow, seeThrough, rgbaAvailable, frameless;
+        double cardsLeft = 264, cardsTop = 34, shownLeft = 264, shownTop = 34;
+        int nudgeX, nudgeY, nudgedX, nudgedY, nudgedW, nudgedH;
+        int lastShapeW, lastShapeH;
         bool closeConfirmed, closing, notesRemembered, firstLoaded;
 
         public IntPtr Handle { get; }
         public string DataDir { get; }
         public bool IsDisposed { get; private set; }
+        internal bool Frameless => frameless;
 
         public MainForm(string dataDir, Settings settings, Library lib, string startupFile)
         {
@@ -66,10 +77,16 @@ namespace NoteSpin
             }
 
             narrow = settings.Get("pref:hideBase") == "1";
+            frameless = settings.Get("pref:hideFrame") == "1";
+            if (frameless)
+            {
+                seeThrough = rgbaAvailable;
+                gtk_window_set_decorated(Handle, 0);
+            }
             FitMinimumSize();
             RestorePlacement();
 
-            page = new PageHost(Bg);
+            page = new PageHost(frameless && seeThrough ? Transparent : Bg);
             page.FilesDropped += OnFilesDropped;
             page.DroppedPaths += OnDroppedPaths;
             page.TitleChanged += t => gtk_window_set_title(Handle, string.IsNullOrWhiteSpace(t) ? "NoteSpin" : t);
@@ -81,10 +98,17 @@ namespace NoteSpin
                 Close();
             };
 
-            page.Start(webContext, "index.html", new HostApi(this, settings, lib, null), settings, Array.Empty<object>());
+            page.Start(
+                webContext,
+                frameless ? "index.html?frameless" : "index.html",
+                new HostApi(this, settings, lib, null),
+                settings,
+                Array.Empty<object>(),
+                new Dictionary<string, object> { ["hidden"] = frameless });
             gtk_container_add(Handle, page.Widget);
 
             signals.Connect(Handle, "draw", new SignalDraw(OnDraw));
+            signals.Connect(Handle, "configure-event", new SignalEvent(OnConfigure));
             signals.Connect(Handle, "delete-event", new SignalEvent(OnDeleteEvent));
             signals.Connect(Handle, "destroy", new SignalVoid1(OnDestroy));
         }
@@ -92,6 +116,7 @@ namespace NoteSpin
         public void Show()
         {
             gtk_widget_show_all(Handle);
+            if (frameless) ShowOnlyShown();
             page.Focus();
         }
 
@@ -405,11 +430,206 @@ namespace NoteSpin
             FitMinimumSize();
         }
 
-        void FitMinimumSize() => gtk_widget_set_size_request(Handle, narrow ? NarrowWidth : MinWidth, MinHeight);
+        static int Px(double cssPx) => (int)Math.Round(cssPx);
+        int SmallestCards => narrow ? MinCardsNarrowWidth : MinCardsWidth;
 
-        void RestorePlacement()
+        void FitMinimumSize()
         {
-            int defW = 1100, defH = 740;
+            if (frameless)
+                gtk_widget_set_size_request(Handle, Px(cardsLeft) + SmallestCards, Px(cardsTop + MinCardsHeight));
+            else
+                gtk_widget_set_size_request(Handle, narrow ? NarrowWidth : MinWidth, MinHeight);
+        }
+
+        /* ---------- the window frame hidden (Settings) ----------
+           No title bar or border, and clear around the cards. The page reserves room to the left and above
+           for its panel and title strip (the toolbar), and we apply a GTK input shape so only the shown part
+           takes clicks while clicks around it pass through to the desktop / windows behind. */
+
+        void ShowOnlyShown(int w = 0, int h = 0)
+        {
+            if (IsDisposed) return;
+            if (!frameless)
+            {
+                gtk_widget_input_shape_combine_region(Handle, IntPtr.Zero);
+                lastShapeW = lastShapeH = 0;
+                return;
+            }
+            if (w <= 0 || h <= 0) gtk_window_get_size(Handle, out w, out h);
+            if (w <= 0 || h <= 0)
+            {
+                w = gtk_widget_get_allocated_width(Handle);
+                h = gtk_widget_get_allocated_height(Handle);
+            }
+            if (w <= 0 || h <= 0) return;
+
+            int x = Math.Max(0, Px(shownLeft));
+            int y = Math.Max(0, Px(shownTop));
+            var rect = new CairoRectangleInt(x, y, Math.Max(1, w - x), Math.Max(1, h - y));
+            IntPtr reg = cairo_region_create_rectangle(ref rect);
+            gtk_widget_input_shape_combine_region(Handle, reg);
+            cairo_region_destroy(reg);
+            lastShapeW = w;
+            lastShapeH = h;
+        }
+
+        int OnConfigure(IntPtr widget, IntPtr ev, IntPtr userData)
+        {
+            if (frameless && !IsDisposed)
+            {
+                gtk_window_get_size(Handle, out int w, out int h);
+                if (w > 0 && h > 0 && (w != lastShapeW || h != lastShapeH))
+                    ShowOnlyShown(w, h);
+            }
+            return 0;
+        }
+
+        internal bool SetFrame(bool hidden, double cardsLeft, double cardsTop, double shownLeft, double shownTop, double fitWidth)
+        {
+            if (!hidden)
+            {
+                if (frameless) ShowFrame(shownLeft, cardsTop);
+                return false;
+            }
+
+            bool coming = !frameless;
+            gtk_window_get_position(Handle, out int wx, out int wy);
+            gtk_window_get_size(Handle, out int ww, out int wh);
+
+            int cardsX, cardsY, cardsW, cardsH;
+            if (coming)
+            {
+                if (gtk_window_is_maximized(Handle) != 0) gtk_window_unmaximize(Handle);
+                int panelW = Px(cardsLeft - shownLeft);
+                cardsX = wx + panelW;
+                cardsY = wy;
+                cardsW = Math.Max(SmallestCards, ww - panelW);
+                cardsH = Math.Max(MinCardsHeight, wh);
+                frameless = true;
+                gtk_window_set_decorated(Handle, 0);
+            }
+            else
+            {
+                cardsX = wx + Px(this.cardsLeft);
+                cardsY = wy + Px(this.cardsTop);
+                cardsW = Math.Max(SmallestCards, ww - Px(this.cardsLeft));
+                cardsH = Math.Max(MinCardsHeight, wh - Px(this.cardsTop));
+                if (!IsWayland && wx == nudgedX && wy == nudgedY && ww == nudgedW && wh == nudgedH)
+                {
+                    cardsX -= nudgeX;
+                    cardsY -= nudgeY;
+                }
+            }
+
+            this.cardsLeft = cardsLeft;
+            this.cardsTop = cardsTop;
+            this.shownLeft = shownLeft;
+            this.shownTop = shownTop;
+            FitMinimumSize();
+
+            int targetW = Math.Max(Px(fitWidth), SmallestCards);
+            if (fitWidth > 0 && targetW < cardsW)
+            {
+                cardsX += (cardsW - targetW) / 2;
+                cardsW = targetW;
+            }
+
+            int newX = cardsX - Px(cardsLeft);
+            int newY = cardsY - Px(cardsTop);
+            int newW = cardsW + Px(cardsLeft);
+            int newH = cardsH + Px(cardsTop);
+
+            if (!IsWayland)
+            {
+                PlaceAround(newX, newY, newW, newH);
+            }
+            else if (newW != ww || newH != wh)
+            {
+                gtk_window_resize(Handle, newW, newH);
+            }
+
+            ShowOnlyShown(newW, newH);
+            gtk_widget_queue_draw(Handle);
+            return true;
+        }
+
+        void PlaceAround(int x, int y, int w, int h)
+        {
+            GdkRectangle wa = PrimaryWorkarea();
+            int dx = 0, dy = 0;
+            if (wa.Width > 0 && wa.Height > 0)
+            {
+                dx = Math.Max(0, Math.Min(wa.X - (x + Px(shownLeft)), Px(cardsLeft - shownLeft)));
+                dy = Math.Max(0, Math.Min(wa.Y - (y + Px(shownTop)), Px(cardsTop - shownTop)));
+            }
+            nudgeX = dx;
+            nudgeY = dy;
+            nudgedX = x + dx;
+            nudgedY = y + dy;
+            nudgedW = w;
+            nudgedH = h;
+            gtk_window_move(Handle, nudgedX, nudgedY);
+            gtk_window_resize(Handle, w, h);
+        }
+
+        void ShowFrame(double panelLeft, double stripHeight)
+        {
+            gtk_window_get_position(Handle, out int wx, out int wy);
+            gtk_window_get_size(Handle, out int ww, out int wh);
+
+            int keepX = wx + Px(panelLeft);
+            int keepY = wy + Px(stripHeight);
+            int keepW = Math.Max(narrow ? NarrowWidth : MinWidth, ww - Px(panelLeft));
+            int keepH = Math.Max(MinHeight, wh - Px(stripHeight));
+
+            frameless = false;
+            ShowOnlyShown(); // clears input shape
+            gtk_window_set_decorated(Handle, 1);
+            FitMinimumSize();
+            gtk_window_resize(Handle, keepW, keepH);
+            if (!IsWayland)
+            {
+                GdkRectangle wa = PrimaryWorkarea();
+                if (wa.Height > 0 && keepY < wa.Y) keepY = wa.Y;
+                gtk_window_move(Handle, keepX, keepY);
+            }
+            gtk_widget_queue_draw(Handle);
+        }
+
+        internal bool DragWindow(bool mouse)
+        {
+            if (IsDisposed) return false;
+            gtk_window_begin_move_drag(Handle, 1, (int)Math.Round(page.LastPressRootX), (int)Math.Round(page.LastPressRootY), page.LastPressTime);
+            return true;
+        }
+
+        internal void SizeWindow(string edge, bool mouse)
+        {
+            if (IsDisposed || !frameless) return;
+            int gdkEdge = edge switch
+            {
+                "left" => GDK_WINDOW_EDGE_WEST,
+                "right" => GDK_WINDOW_EDGE_EAST,
+                "top" => GDK_WINDOW_EDGE_NORTH,
+                "bottom" => GDK_WINDOW_EDGE_SOUTH,
+                "topleft" => GDK_WINDOW_EDGE_NORTH_WEST,
+                "topright" => GDK_WINDOW_EDGE_NORTH_EAST,
+                "bottomleft" => GDK_WINDOW_EDGE_SOUTH_WEST,
+                "bottomright" => GDK_WINDOW_EDGE_SOUTH_EAST,
+                _ => -1,
+            };
+            if (gdkEdge < 0) return;
+            gtk_window_begin_resize_drag(Handle, gdkEdge, 1, (int)Math.Round(page.LastPressRootX), (int)Math.Round(page.LastPressRootY), page.LastPressTime);
+        }
+
+        internal void WindowCommand(string what)
+        {
+            if (what == "minimize") Later(() => gtk_window_iconify(Handle));
+            else if (what == "close") Later(Close);
+        }
+
+        static GdkRectangle PrimaryWorkarea()
+        {
             try
             {
                 IntPtr disp = gdk_display_get_default();
@@ -418,27 +638,56 @@ namespace NoteSpin
                 if (mon != IntPtr.Zero)
                 {
                     gdk_monitor_get_workarea(mon, out GdkRectangle wa);
-                    if (wa.Width >= 800 && wa.Height >= 600)
-                    {
-                        defW = wa.Width * 4 / 5;
-                        defH = wa.Height * 6 / 7;
-                    }
+                    return wa;
                 }
             }
             catch { }
+            return default;
+        }
+
+        void RestorePlacement()
+        {
+            int defW = 1100, defH = 740;
+            GdkRectangle wa = PrimaryWorkarea();
+            if (wa.Width >= 800 && wa.Height >= 600)
+            {
+                defW = wa.Width * 4 / 5;
+                defH = wa.Height * 6 / 7;
+            }
 
             string fixedPlace = Environment.GetEnvironmentVariable("NOTESPIN_WINDOW");
+            if (frameless && string.IsNullOrEmpty(fixedPlace) && RestoreFloat()) return;
+
             string[] p = (string.IsNullOrEmpty(fixedPlace) ? settings.Get("app:window") ?? "" : fixedPlace + ",0").Split(',');
             if (p.Length >= 5 && int.TryParse(p[0], out int x) && int.TryParse(p[1], out int y) &&
                 int.TryParse(p[2], out int w) && int.TryParse(p[3], out int h) &&
                 w >= Math.Min(400, narrow ? NarrowWidth : MinWidth) && h >= 300)
             {
                 gtk_window_set_default_size(Handle, w, h);
-                gtk_window_move(Handle, x, y); // honored on X11/XWayland, safely ignored on Wayland
-                if (p[4] == "1") gtk_window_maximize(Handle);
+                if (!IsWayland) gtk_window_move(Handle, x, y);
+                if (p[4] == "1" && !frameless) gtk_window_maximize(Handle);
                 return;
             }
             gtk_window_set_default_size(Handle, defW, defH);
+        }
+
+        bool RestoreFloat()
+        {
+            string[] p = (settings.Get(FloatKey) ?? "").Split(',');
+            var d = new double[4];
+            if (p.Length < 8 || !int.TryParse(p[0], out int x) || !int.TryParse(p[1], out int y) ||
+                !int.TryParse(p[2], out int w) || !int.TryParse(p[3], out int h)) return false;
+            for (int i = 0; i < 4; i++)
+                if (!double.TryParse(p[4 + i], NumberStyles.Float, CultureInfo.InvariantCulture, out d[i]) || d[i] < 0 || d[i] > 1000) return false;
+            if (w - Px(d[2]) < 100 || h - Px(d[3]) < 100) return false;
+            cardsLeft = d[0];
+            cardsTop = d[1];
+            shownLeft = d[2];
+            shownTop = d[3];
+            FitMinimumSize();
+            gtk_window_set_default_size(Handle, w, h);
+            if (!IsWayland) gtk_window_move(Handle, x, y);
+            return true;
         }
 
         void SavePlacement()
@@ -448,8 +697,16 @@ namespace NoteSpin
                 bool max = gtk_window_is_maximized(Handle) != 0;
                 gtk_window_get_position(Handle, out int x, out int y);
                 gtk_window_get_size(Handle, out int w, out int h);
-                if (w >= 200 && h >= 200)
+                if (w < 200 || h < 200) return;
+                if (frameless)
+                {
+                    settings.Set(FloatKey, string.Join(",", x, y, w, h) + "," +
+                        string.Join(",", new[] { cardsLeft, cardsTop, shownLeft, shownTop }.Select(v => v.ToString("0.##", CultureInfo.InvariantCulture))));
+                }
+                else
+                {
                     settings.Set("app:window", $"{x},{y},{w},{h},{(max ? 1 : 0)}");
+                }
             }
             catch { }
         }

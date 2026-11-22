@@ -108,7 +108,7 @@ namespace NoteSpin
             return sharedContext;
         }
 
-        public void Start(IntPtr context, string page, HostApi api, Settings settings, object initialNoteWinState = null)
+        public void Start(IntPtr context, string page, HostApi api, Settings settings, object initialNoteWinState = null, object initialFrameInfo = null)
         {
             hostApi = api;
             Widget = webkit_web_view_new_with_context(context);
@@ -126,7 +126,8 @@ namespace NoteSpin
             // Preload pref:* values synchronously at document start so NS.prefGet() needs no blocking IPC
             var initPrefs = settings != null ? settings.GetAllPrefs() : new Dictionary<string, string>();
             string bootstrap = "window.__nsInitPrefs = " + JsonCodec.Serialize(initPrefs) + ";" +
-                (initialNoteWinState != null ? "window.__nsNoteWinState = " + JsonCodec.Serialize(initialNoteWinState) + ";" : "");
+                (initialNoteWinState != null ? "window.__nsNoteWinState = " + JsonCodec.Serialize(initialNoteWinState) + ";" : "") +
+                (initialFrameInfo != null ? "window.__nsFrameInfo = " + JsonCodec.Serialize(initialFrameInfo) + ";" : "");
             IntPtr userScript = webkit_user_script_new(
                 bootstrap,
                 WEBKIT_USER_CONTENT_INJECT_TOP_FRAME,

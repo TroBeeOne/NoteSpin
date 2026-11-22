@@ -40,6 +40,13 @@ namespace NoteSpin
             public int X, Y, Width, Height;
         }
 
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CairoRectangleInt
+        {
+            public int X, Y, Width, Height;
+            public CairoRectangleInt(int x, int y, int w, int h) { X = x; Y = y; Width = w; Height = h; }
+        }
+
         /* ---------- constants ---------- */
 
         public const int GTK_WINDOW_TOPLEVEL = 0;
@@ -193,6 +200,8 @@ namespace NoteSpin
         [DllImport(GtkLib)] public static extern void gtk_window_get_size(IntPtr win, out int width, out int height);
         [DllImport(GtkLib)] public static extern void gtk_window_get_position(IntPtr win, out int x, out int y);
         [DllImport(GtkLib)] public static extern void gtk_window_maximize(IntPtr win);
+        [DllImport(GtkLib)] public static extern void gtk_window_unmaximize(IntPtr win);
+        [DllImport(GtkLib)] public static extern void gtk_window_iconify(IntPtr win);
         [DllImport(GtkLib)] public static extern void gtk_window_deiconify(IntPtr win);
         [DllImport(GtkLib)] public static extern void gtk_window_present(IntPtr win);
         [DllImport(GtkLib)] public static extern void gtk_window_set_decorated(IntPtr win, int setting);
@@ -219,6 +228,7 @@ namespace NoteSpin
         [DllImport(GtkLib)] public static extern int gtk_widget_get_allocated_height(IntPtr widget);
         [DllImport(GtkLib)] public static extern void gtk_widget_add_events(IntPtr widget, int events);
         [DllImport(GtkLib)] public static extern void gtk_widget_realize(IntPtr widget);
+        [DllImport(GtkLib)] public static extern void gtk_widget_input_shape_combine_region(IntPtr widget, IntPtr region);
 
         [DllImport(GtkLib)] public static extern void gtk_container_add(IntPtr container, IntPtr widget);
         [DllImport(GtkLib)] public static extern void gtk_container_set_border_width(IntPtr container, uint borderWidth);
@@ -271,6 +281,8 @@ namespace NoteSpin
         [DllImport(CairoLib)] public static extern void cairo_set_operator(IntPtr cr, int op);
         [DllImport(CairoLib)] public static extern void cairo_set_source_rgba(IntPtr cr, double r, double g, double b, double a);
         [DllImport(CairoLib)] public static extern void cairo_paint(IntPtr cr);
+        [DllImport(CairoLib)] public static extern IntPtr cairo_region_create_rectangle(ref CairoRectangleInt rect);
+        [DllImport(CairoLib)] public static extern void cairo_region_destroy(IntPtr region);
 
         [DllImport(PixbufLib)] public static extern IntPtr gdk_pixbuf_loader_new();
         [DllImport(PixbufLib)] public static extern int gdk_pixbuf_loader_write(IntPtr loader, byte[] buf, UIntPtr count, out IntPtr err);

@@ -113,6 +113,7 @@
   window.NS = {
     call(name, ...args) { return invoke(name, args, true); },
     callSync(name, ...args) {
+      if (name === 'FrameInfo') return window.__nsFrameInfo || null;
       if (name === 'NoteWinState') return noteWinState;
       if (name === 'PrefGet') return this.prefGet(args[0]);
       if (name === 'PrefSet') { this.prefSet(args[0], args[1]); return true; }

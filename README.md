@@ -291,12 +291,12 @@ same web interface and `.notespin` SQLite notebook format as Windows.
   `.desktop` entry, icon, and `.notespin` file association under `~/.local/share` (no `sudo` needed; turning it off
   removes them cleanly). On Wayland desktops (such as GNOME), restarting NoteSpin after turning this on gives it its
   real dock/launcher icon.
-- **Wayland notes:** Pop-out note windows, moving/resizing them, and the see-through background all work on Wayland.
-  Due to Wayland security restrictions, dragging a note window back onto the main window to re-dock (use the put-back
-  button instead) and client-side always-on-top pinning aren't available natively on Wayland (on GNOME you can use
+- **Wayland notes:** Pop-out note windows, moving/resizing them, the see-through background, and *Hide the window
+  frame* (with click-through outside the cards) all work on Wayland. Due to Wayland security restrictions, dragging a
+  note window back onto the main window to re-dock (use the put-back button instead), remembering exact window screen
+  positions, and client-side always-on-top pinning aren't available natively on Wayland (on GNOME you can use
   `Alt+Space → Always on Top`, or launch under XWayland with `GDK_BACKEND=x11 ./NoteSpin`). Microsoft Sticky Notes
   import is Windows-only.
-- **Hide the window frame** isn't in the Linux build yet, so Settings doesn't offer it there.
 
 ## Keyboard, mouse and touch
 

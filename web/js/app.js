@@ -315,7 +315,7 @@ function setBaseHidden(on) {
    brings them back, or moves the window when it's dragged. The page keeps room for the toolbar to the left of
    the cards and above them (the CSS for body.frameless); the app shows only the part in use (see MainForm). */
 
-let frameCapable = false;   // the app can hide its frame (not the Linux build yet: there FrameInfo answers null)
+let frameCapable = false;   // whether the host supports hiding the window frame
 const frameHidden = () => document.body.classList.contains('frameless');
 const barOut = () => document.body.classList.contains('bar-out');
 
@@ -384,8 +384,34 @@ function wireFrame() {
   show.addEventListener('pointerdown', async e => {
     if (e.button !== 0) return;
     e.preventDefault();
-    const moved = await NS.call('FrameDrag', e.pointerType === 'mouse').catch(() => false);
-    if (!moved) setBar(true);
+    if (!isLinux) {
+      const moved = await NS.call('FrameDrag', e.pointerType === 'mouse').catch(() => false);
+      if (!moved) setBar(true);
+      return;
+    }
+    // Linux/GTK: begin_move_drag is asynchronous, so tell a click from a drag using a small movement threshold
+    const id = e.pointerId, x0 = e.clientX, y0 = e.clientY, mouse = e.pointerType === 'mouse';
+    show.setPointerCapture(id);
+    const cleanup = () => {
+      show.removeEventListener('pointermove', move);
+      show.removeEventListener('pointerup', up);
+      show.removeEventListener('pointercancel', cancel);
+      try { if (show.hasPointerCapture(id)) show.releasePointerCapture(id); } catch {}
+    };
+    const move = ev => {
+      if (ev.pointerId !== id || Math.hypot(ev.clientX - x0, ev.clientY - y0) < 5) return;
+      cleanup();
+      NS.call('FrameDrag', mouse).catch(() => {});
+    };
+    const up = ev => {
+      if (ev.pointerId !== id) return;
+      cleanup();
+      setBar(true);
+    };
+    const cancel = ev => { if (ev.pointerId === id) cleanup(); };
+    show.addEventListener('pointermove', move);
+    show.addEventListener('pointerup', up);
+    show.addEventListener('pointercancel', cancel);
   });
   show.addEventListener('click', e => { if (e.detail === 0) setBar(true); });   // the keyboard
   // the edges resize the window
