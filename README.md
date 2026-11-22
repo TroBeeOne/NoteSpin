@@ -3,6 +3,8 @@
 Sticky notes on a spinning 3D card wheel, for Windows and Linux. Each note is a pastel card in the colour of its
 category; turn the wheel to flip through them, click the front card to open it.
 
+![A short look at NoteSpin: the note cards on their wheel, standing on the desktop with the window frame hidden](notespin.gif)
+
 On Windows, nothing needs installing: copy the `NoteSpin` folder anywhere and run `NoteSpin.exe`. It runs on
 .NET Framework 4.8 and the Microsoft Edge WebView2 Runtime, both part of Windows 10 and 11. On
 [Linux](#linux), extract the tarball and run `./NoteSpin` (uses the .NET 10 runtime and system GTK3 /
