@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -40,12 +41,15 @@ namespace NoteSpin
             this.lib = lib;
             this.startupFile = startupFile;
             Text = "NoteSpin";
-            BackColor = Bg;
             Icon = WebAssets.AppIcon() ?? Icon;
             StartPosition = FormStartPosition.Manual;
             narrow = settings.Get("pref:hideBase") == "1";
+            // with the frame hidden, clear from the start (the page says so again once it's up)
+            frameless = seeThrough = settings.Get("pref:hideFrame") == "1";
+            BackColor = frameless ? Color.Black : Bg;   // black is clear where the window is see-through
             FitMinimumSize();
-            page = new PageHost(this, Bg);
+            sizer = new EdgeSizer(this);
+            page = new PageHost(this, frameless ? Color.Transparent : Bg);
             page.FileDropped += OnDroppedFile;
             page.BrowserExited += () =>
             {
@@ -65,7 +69,8 @@ namespace NoteSpin
             try
             {
                 env = await CoreWebView2Environment.CreateAsync(null, Path.Combine(DataDir, "WebView2"), new CoreWebView2EnvironmentOptions());
-                await page.Start(env, "index.html", new HostApi(this, settings, lib, null));
+                // the page is told about a hidden frame in its address, so its first paint is clear too
+                await page.Start(env, frameless ? "index.html?frameless" : "index.html", new HostApi(this, settings, lib, null));
                 page.Core.WebMessageReceived += OnWebMessage;
                 page.Core.DocumentTitleChanged += (s, a) => Text = string.IsNullOrWhiteSpace(page.Core.DocumentTitle) ? "NoteSpin" : page.Core.DocumentTitle;
                 page.Core.NavigationCompleted += OnFirstPageLoaded;
@@ -317,7 +322,7 @@ namespace NoteSpin
         {
             if (!Visible || WindowState == FormWindowState.Minimized || page.Core == null || w == null || w.IsDisposed) return null;
             var c = PointToClient(p);
-            if (!ClientRectangle.Contains(c) || !Native.IsWindowBelowAt(w.Handle, Handle, p)) return null;
+            if (!(frameless ? ShownPart : ClientRectangle).Contains(c) || !Native.IsWindowBelowAt(w.Handle, Handle, p)) return null;
             double s = page.Scale;
             return new Point((int)Math.Round(c.X / s), (int)Math.Round(c.Y / s));
         }
@@ -428,11 +433,14 @@ namespace NoteSpin
         {
             base.OnHandleCreated(e);
             if (seeThrough) Native.SeeThrough(Handle, true);   // a new handle starts solid
+            ShowOnlyShown();
         }
 
         // With the spinner base hidden (Settings) only the cards show, so the window can be narrower:
-        // down to NarrowWidth DIPs, though never wider than the usual minimum
+        // down to NarrowWidth DIPs, though never wider than the usual minimum. With the frame hidden, the
+        // cards' box has a smallest size of its own, and the window is that plus the toolbar's room.
         const int MinWidth = 560, MinHeight = 420, NarrowWidth = 340;
+        const int MinCardsWidth = 360, MinCardsNarrowWidth = 240, MinCardsHeight = 280;
         bool narrow;
 
         internal void SetNarrow(bool on)
@@ -441,19 +449,176 @@ namespace NoteSpin
             FitMinimumSize();
         }
 
+        int SmallestCards => Px(narrow ? MinCardsNarrowWidth : MinCardsWidth);
+
         void FitMinimumSize() =>
-            MinimumSize = new Size(narrow ? Math.Min(MinWidth, (int)Math.Round(NarrowWidth * DeviceDpi / 96.0)) : MinWidth, MinHeight);
+            MinimumSize = frameless ? new Size(Px(cardsLeft) + SmallestCards, Px(cardsTop + MinCardsHeight))
+                : new Size(narrow ? Math.Min(MinWidth, Px(NarrowWidth)) : MinWidth, MinHeight);
 
         protected override void OnDpiChanged(DpiChangedEventArgs e)
         {
             base.OnDpiChanged(e);
             FitMinimumSize();
+            sizer?.Restart();   // resized onto another screen: go on from here
         }
 
         protected override void OnResize(EventArgs e)
         {
             base.OnResize(e);
             page?.Fit();
+            if (frameless && WindowState == FormWindowState.Normal) ShowOnlyShown();
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            if (sizer != null && sizer.Handle(ref m)) return;
+            base.WndProc(ref m);
+        }
+
+        /* ---------- the window frame hidden (Settings) ----------
+           No title bar or border, and the space around the cards is clear, so they seem to stand on the desktop.
+           The page keeps room to the left of the cards and above them for its panel and a title strip (the
+           toolbar). The window takes in that room too, but only the part the page shows is kept (a window
+           region): the cards' box with the toolbar hidden, toolbar and cards with it out. So the toolbar comes
+           and goes without the window changing size, which would make the page jump: a web view resized from its
+           left or top edge shows its old picture in the wrong place for a moment. */
+
+        bool frameless;
+        // DIPs (the page's CSS pixels): where the cards' box starts in the window, and where the part shown starts
+        double cardsLeft = 264, cardsTop = 34, shownLeft = 264, shownTop = 34;
+        // moved onto the screen to make room for the toolbar: how far, and where the window was put
+        Point nudge;
+        Rectangle nudged;
+        readonly EdgeSizer sizer;   // resizing from the page's edges
+
+        internal bool Frameless => frameless;
+
+        int Px(double dips) => (int)Math.Round(dips * DeviceDpi / 96.0);
+
+        // the part of the window shown (pixels from its top-left corner), and the cards' box on screen
+        Rectangle ShownPart => Rectangle.FromLTRB(Px(shownLeft), Px(shownTop), Width, Height);
+        Rectangle Cards => Rectangle.FromLTRB(Left + Px(cardsLeft), Top + Px(cardsTop), Right, Bottom);
+
+        void ShowOnlyShown()
+        {
+            if (frameless && IsHandleCreated) Native.ShowOnly(Handle, ShownPart);
+        }
+
+        // No title bar or border; still a minimise box (for the taskbar button and Win+D) and the system menu (Alt+Space).
+        // UpdateStyles applies these to the window as it is.
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                var cp = base.CreateParams;
+                if (frameless)
+                {
+                    cp.Style = (cp.Style & ~(Native.WS_CAPTION | Native.WS_THICKFRAME | Native.WS_MAXIMIZEBOX)) | Native.WS_SYSMENU | Native.WS_MINIMIZEBOX;
+                    cp.ExStyle &= ~(Native.WS_EX_DLGMODALFRAME | Native.WS_EX_WINDOWEDGE | Native.WS_EX_CLIENTEDGE);
+                }
+                return cp;
+            }
+        }
+
+        /// <summary>
+        /// The frame hidden or shown, and where the page has its parts (DIPs): the cards' box from (cardsLeft,
+        /// cardsTop) to the bottom-right corner, the part shown from (shownLeft, shownTop), the toolbar being left
+        /// of the cards and above them. The cards keep their place on screen. fitWidth: the cards' box is made
+        /// this narrow (DIPs, keeping its middle) when it's wider; 0 leaves it. Whether the frame is hidden now.
+        /// </summary>
+        internal bool SetFrame(bool hidden, double cardsLeft, double cardsTop, double shownLeft, double shownTop, double fitWidth)
+        {
+            if (!hidden)
+            {
+                if (frameless) ShowFrame(shownLeft, cardsTop);
+                return false;
+            }
+            Rectangle cards;
+            if (!frameless)
+            {
+                if (WindowState == FormWindowState.Maximized) WindowState = FormWindowState.Normal;
+                // framed, the page starts with the panel: the cards' box starts where it ends
+                var client = RectangleToScreen(ClientRectangle);
+                cards = Rectangle.FromLTRB(client.Left + Px(cardsLeft - shownLeft), client.Top, client.Right, client.Bottom);
+                frameless = true;
+                BackColor = Color.Black;
+                UpdateStyles();
+            }
+            else
+            {
+                cards = Cards;
+                if (Bounds == nudged) cards.Offset(-nudge.X, -nudge.Y);   // moved for the toolbar and not since: back
+            }
+            this.cardsLeft = cardsLeft;
+            this.cardsTop = cardsTop;
+            this.shownLeft = shownLeft;
+            this.shownTop = shownTop;
+            FitMinimumSize();
+            if (WindowState == FormWindowState.Normal)
+            {
+                int w = Math.Max(Px(fitWidth), SmallestCards);
+                if (fitWidth > 0 && w < cards.Width) cards = new Rectangle(cards.X + (cards.Width - w) / 2, cards.Y, w, cards.Height);
+                PlaceAround(cards);
+            }
+            ShowOnlyShown();
+            return true;
+        }
+
+        // The window around the cards' box, with the toolbar's room to the left and above. If the part shown
+        // would start off the screen, the window moves onto it (by no more than the toolbar's own size).
+        void PlaceAround(Rectangle cards)
+        {
+            var r = Rectangle.FromLTRB(cards.Left - Px(cardsLeft), cards.Top - Px(cardsTop), cards.Right, cards.Bottom);
+            var wa = Screen.FromRectangle(cards).WorkingArea;
+            int dx = Math.Max(0, Math.Min(wa.Left - (r.Left + Px(shownLeft)), Px(cardsLeft - shownLeft)));
+            int dy = Math.Max(0, Math.Min(wa.Top - (r.Top + Px(shownTop)), Px(cardsTop - shownTop)));
+            r.Offset(dx, dy);
+            nudge = new Point(dx, dy);
+            Bounds = r;
+            nudged = Bounds;
+        }
+
+        // The frame back: the page below the title strip (panel and cards) keeps its place, inside the frame
+        void ShowFrame(double panelLeft, double stripHeight)
+        {
+            var keep = Rectangle.FromLTRB(Left + Px(panelLeft), Top + Px(stripHeight), Right, Bottom);
+            frameless = false;
+            Native.ShowOnly(Handle, null);
+            BackColor = Bg;
+            UpdateStyles();
+            FitMinimumSize();
+            Rectangle b = Bounds, c = RectangleToScreen(ClientRectangle);
+            var r = new Rectangle(keep.X - (c.X - b.X), keep.Y - (c.Y - b.Y), keep.Width + b.Width - c.Width, keep.Height + b.Height - c.Height);
+            var wa = Screen.FromRectangle(keep).WorkingArea;
+            if (r.Top < wa.Top) r.Offset(0, wa.Top - r.Top);   // the title bar on the screen
+            Bounds = r;
+            Invalidate();
+        }
+
+        /// <summary>Moves the window with the mouse (or a finger) from the page, as a title bar does. Whether it moved.</summary>
+        internal bool DragWindow(bool mouse)
+        {
+            if (mouse && !Native.PrimaryButtonDown()) return false;   // already let go: that was a click
+            var before = Location;
+            Native.ReleaseCapture();
+            Native.SendMessage(Handle, Native.WM_NCLBUTTONDOWN, (IntPtr)Native.HTCAPTION, IntPtr.Zero);   // returns when it's let go
+            return Location != before;
+        }
+
+        /// <summary>Resizes the window from one of the page's edges ("left", "topright", …) until the mouse is let go.</summary>
+        internal void SizeWindow(string edge, bool mouse)
+        {
+            int e = EdgeSizer.Named(edge);
+            if (!frameless || e == 0 || WindowState != FormWindowState.Normal || (mouse && !Native.PrimaryButtonDown())) return;
+            Native.ReleaseCapture();   // from the page, which had the mouse
+            sizer.Start(e, Cursor.Position, mouse);
+        }
+
+        /// <summary>The title strip's buttons: "minimize" or "close".</summary>
+        internal void WindowCommand(string what)
+        {
+            if (what == "minimize") Later(() => WindowState = FormWindowState.Minimized);
+            else if (what == "close") Later(Close);
         }
 
         protected override void OnMove(EventArgs e)
@@ -505,13 +670,38 @@ namespace NoteSpin
             Bounds = new Rectangle(wa.X + wa.Width / 10, wa.Y + wa.Height / 14, wa.Width * 4 / 5, wa.Height * 6 / 7);
             // NOTESPIN_WINDOW=x,y,width,height places the window exactly (for repeatable test screenshots)
             string fixedPlace = Environment.GetEnvironmentVariable("NOTESPIN_WINDOW");
+            if (frameless && string.IsNullOrEmpty(fixedPlace) && RestoreFloat()) return;
             string[] p = (string.IsNullOrEmpty(fixedPlace) ? settings.Get("app:window") ?? "" : fixedPlace + ",0").Split(',');
             if (p.Length < 5 || !int.TryParse(p[0], out int x) || !int.TryParse(p[1], out int y) ||
                 !int.TryParse(p[2], out int w) || !int.TryParse(p[3], out int h)) return;
             var r = new Rectangle(x, y, w, h);
             if (w < Math.Min(400, MinimumSize.Width) || h < 300 || !Screen.AllScreens.Any(sc => Rectangle.Intersect(sc.WorkingArea, r).Width >= 200 && Rectangle.Intersect(sc.WorkingArea, r).Height >= 100)) return;
             Bounds = r;
-            if (p[4] == "1") WindowState = FormWindowState.Maximized;
+            if (p[4] == "1" && !frameless) WindowState = FormWindowState.Maximized;
+        }
+
+        // "app:float": with the frame hidden, the window (pixels) and where its parts start (DIPs, see SetFrame):
+        // x,y,width,height,cardsLeft,cardsTop,shownLeft,shownTop. "app:window" keeps the framed window's place.
+        const string FloatKey = "app:float";
+
+        bool RestoreFloat()
+        {
+            string[] p = (settings.Get(FloatKey) ?? "").Split(',');
+            var d = new double[4];
+            if (p.Length < 8 || !int.TryParse(p[0], out int x) || !int.TryParse(p[1], out int y) || !int.TryParse(p[2], out int w) ||
+                !int.TryParse(p[3], out int h)) return false;
+            for (int i = 0; i < 4; i++)
+                if (!double.TryParse(p[4 + i], NumberStyles.Float, CultureInfo.InvariantCulture, out d[i]) || d[i] < 0 || d[i] > 1000) return false;
+            var shown = Rectangle.FromLTRB(x + Px(d[2]), y + Px(d[3]), x + w, y + h);
+            if (shown.Width < 100 || shown.Height < 100 ||
+                !Screen.AllScreens.Any(sc => { var i = Rectangle.Intersect(sc.WorkingArea, shown); return i.Width >= 100 && i.Height >= 60; })) return false;
+            cardsLeft = d[0];
+            cardsTop = d[1];
+            shownLeft = d[2];
+            shownTop = d[3];
+            FitMinimumSize();
+            Bounds = new Rectangle(x, y, w, h);
+            return true;
         }
 
         void SavePlacement()
@@ -519,7 +709,11 @@ namespace NoteSpin
             try
             {
                 var r = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
-                settings.Set("app:window", $"{r.X},{r.Y},{r.Width},{r.Height},{(WindowState == FormWindowState.Maximized ? 1 : 0)}");
+                if (frameless)
+                    settings.Set(FloatKey, string.Join(",", r.X, r.Y, r.Width, r.Height) + "," +
+                        string.Join(",", new[] { cardsLeft, cardsTop, shownLeft, shownTop }.Select(v => v.ToString("0.##", CultureInfo.InvariantCulture))));
+                else
+                    settings.Set("app:window", $"{r.X},{r.Y},{r.Width},{r.Height},{(WindowState == FormWindowState.Maximized ? 1 : 0)}");
             }
             catch { }
         }

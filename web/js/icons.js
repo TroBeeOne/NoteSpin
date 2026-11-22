@@ -22,6 +22,8 @@ document.currentScript.insertAdjacentHTML('afterend', `<svg width="0" height="0"
     <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 3.5h4M6.5 7l1 13h9l1-13M10 11v6M14 11v6"/></symbol>
     <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+    <symbol id="i-toolbar" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 9h17M9 9v10.5"/></symbol>
+    <symbol id="i-minimize" viewBox="0 0 24 24"><path d="M6 12.5h12"/></symbol>
     <symbol id="i-ul" viewBox="0 0 24 24"><circle cx="5" cy="7" r="1.3" fill="currentColor"/><circle cx="5" cy="12" r="1.3" fill="currentColor"/><circle cx="5" cy="17" r="1.3" fill="currentColor"/><path d="M9.5 7H20M9.5 12H20M9.5 17H20"/></symbol>
     <symbol id="i-ol" viewBox="0 0 24 24"><path d="M3.8 5.2 5 4.5v5M3.8 9.5h2.4M3.6 14.6a1.3 1.3 0 1 1 2.2 1L3.6 19h2.7M10 7h10M10 12h10M10 17h10"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><rect x="3" y="4" width="6" height="6" rx="1.2"/><path d="m4.4 7.1 1.3 1.3L8.2 5.6"/><rect x="3" y="14" width="6" height="6" rx="1.2"/><path d="M12 7h8M12 17h8"/></symbol>

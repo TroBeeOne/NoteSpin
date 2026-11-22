@@ -12,7 +12,9 @@ namespace NoteSpin
             WM_MOUSEMOVE = 0x0200, WM_LBUTTONUP = 0x0202, WM_CAPTURECHANGED = 0x0215;
         public const int HTCLIENT = 1, HTCAPTION = 2, HTLEFT = 10, HTRIGHT = 11, HTTOP = 12, HTTOPLEFT = 13, HTTOPRIGHT = 14,
             HTBOTTOM = 15, HTBOTTOMLEFT = 16, HTBOTTOMRIGHT = 17;
-        public const int WS_SYSMENU = 0x00080000, WS_MINIMIZEBOX = 0x00020000;
+        public const int WS_SYSMENU = 0x00080000, WS_MINIMIZEBOX = 0x00020000, WS_MAXIMIZEBOX = 0x00010000,
+            WS_CAPTION = 0x00C00000, WS_THICKFRAME = 0x00040000;
+        public const int WS_EX_DLGMODALFRAME = 0x0001, WS_EX_WINDOWEDGE = 0x0100, WS_EX_CLIENTEDGE = 0x0200;
         const uint SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002, SWP_NOACTIVATE = 0x0010;
         const int VK_LBUTTON = 0x01, VK_RBUTTON = 0x02;
         const uint GW_HWNDNEXT = 2;
@@ -29,6 +31,7 @@ namespace NoteSpin
         [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr hWnd, int attr, ref int value, int size);
         [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hWnd, int attr, out int value, int size);
         [DllImport("dwmapi.dll")] static extern int DwmEnableBlurBehindWindow(IntPtr hWnd, ref DWM_BLURBEHIND blurBehind);
+        [DllImport("user32.dll")] static extern int SetWindowRgn(IntPtr hWnd, IntPtr region, bool redraw);
         [DllImport("gdi32.dll")] static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
         [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr obj);
 
@@ -58,6 +61,17 @@ namespace NoteSpin
             try { return DwmEnableBlurBehindWindow(hWnd, ref bb) == 0; }
             catch { return false; }
             finally { if (none != IntPtr.Zero) DeleteObject(none); }
+        }
+
+        /// <summary>
+        /// Keeps only part of a window (r, in pixels from its top-left corner): the rest isn't drawn and the mouse
+        /// goes through it to whatever is behind. Null: the whole window again.
+        /// </summary>
+        public static void ShowOnly(IntPtr hWnd, Rectangle? r)
+        {
+            IntPtr rgn = r is Rectangle k ? CreateRectRgn(k.Left, k.Top, k.Right, k.Bottom) : IntPtr.Zero;
+            // Windows owns the region once it's set; it's only ours to delete if that failed
+            if (SetWindowRgn(hWnd, rgn, true) == 0 && rgn != IntPtr.Zero) DeleteObject(rgn);
         }
 
         /// <summary>Whether the main mouse button is down right now (the physical one, so a left-handed mouse counts too).</summary>

@@ -200,6 +200,61 @@ body.collapsed #panel > * { flex-shrink: 0; }
   body.collapsed #panel .foot { gap: 0; padding-top: 4px; }
 }
 
+/* ---------- the window frame hidden (Settings) ----------
+   No Windows frame, and clear around the cards. The window keeps room to the left of the cards and above them
+   for the panel and a title strip (the toolbar), and the app shows only the part in use: the cards' box with the
+   toolbar hidden; the toolbar and the cards with it out (not the room left of a folded panel). --shown-left and
+   --shown-top are where that part starts, so notes open over the cards and dialogs stay inside it. */
+:root { --pwmax: 264px; --strip: 34px; }   /* --pwmax: the panel unfolded (--pw) */
+.title-strip, .bar-show, .frame-edges { display: none; }
+body.frameless { background: transparent; --shown-left: var(--pwmax); --shown-top: var(--strip); }
+body.frameless.bar-out { --shown-left: calc(var(--pwmax) - var(--pw)); --shown-top: 0px; }
+body.frameless #stage { inset: var(--strip) 0 0 var(--pwmax); transition: none; }
+body.frameless #panel { inset: var(--strip) auto 0 var(--shown-left); transition: none; }
+body.frameless:not(.bar-out) #panel { display: none; }
+body.frameless .ed-layer, body.frameless .dlg-back { inset: var(--shown-top) 0 0 var(--shown-left); }
+body.frameless .dlg { max-height: calc(100vh - var(--shown-top) - 32px); }
+
+body.frameless.bar-out .title-strip {
+  position: fixed; inset: 0 0 auto var(--shown-left); z-index: 6;
+  height: var(--strip);
+  display: flex; align-items: center; gap: 2px;
+  padding: 0 4px 0 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.strip-title { flex: 1; min-width: 0; font-size: 12.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.strip-btn { width: 32px; height: 26px; border-radius: 7px; }
+.strip-btn svg { width: 16px; height: 16px; }
+.strip-btn.close:hover { background: #c42b1c; color: #fff; }
+
+/* faint until the mouse is over the cards */
+body.frameless:not(.bar-out) .bar-show {
+  position: fixed; left: calc(var(--pwmax) + 8px); top: calc(var(--strip) + 8px); z-index: 15;
+  display: grid; place-items: center;
+  width: 30px; height: 30px; padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 9px;
+  background: rgba(26, 29, 35, 0.72);
+  color: var(--text-2);
+  opacity: 0.4;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+body.frameless:not(.bar-out):hover .bar-show, .bar-show:focus-visible { opacity: 1; }
+.bar-show:hover { background: rgba(34, 38, 46, 0.94); color: var(--text-strong); }
+.bar-show svg { width: 16px; height: 16px; }
+
+body.frameless.bar-out .frame-edges { display: block; }
+.frame-edges > div { position: fixed; z-index: 45; }
+.frame-edges [data-edge=left] { left: var(--shown-left); top: 10px; bottom: 10px; width: 5px; cursor: ew-resize; }
+.frame-edges [data-edge=right] { right: 0; top: 10px; bottom: 10px; width: 5px; cursor: ew-resize; }
+.frame-edges [data-edge=top] { top: 0; left: calc(var(--shown-left) + 10px); right: 10px; height: 4px; cursor: ns-resize; }
+.frame-edges [data-edge=bottom] { bottom: 0; left: calc(var(--shown-left) + 10px); right: 10px; height: 5px; cursor: ns-resize; }
+.frame-edges [data-edge=topleft] { top: 0; left: var(--shown-left); width: 10px; height: 10px; cursor: nwse-resize; }
+.frame-edges [data-edge=topright] { top: 0; right: 0; width: 10px; height: 10px; cursor: nesw-resize; }
+.frame-edges [data-edge=bottomleft] { bottom: 0; left: var(--shown-left); width: 10px; height: 10px; cursor: nesw-resize; }
+.frame-edges [data-edge=bottomright] { bottom: 0; right: 0; width: 10px; height: 10px; cursor: nwse-resize; }
+
 /* ---------- stage overlays ---------- */
 
 .stage-empty {

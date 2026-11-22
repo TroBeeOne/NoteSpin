@@ -65,6 +65,8 @@ namespace NoteSpin
             Icon = WebAssets.AppIcon() ?? Icon;
             BackColor = DefaultBand;
             page = new PageHost(this, DefaultPaper);
+            sizer = new EdgeSizer(this);
+            sizer.Ended += SavePlacement;
             followTimer.Tick += (s, e) => Follow();
             FitToDpi();
         }
@@ -116,7 +118,7 @@ namespace NoteSpin
         {
             base.OnDpiChanged(e);
             FitToDpi();
-            if (sizing != 0) { sizeStart = Bounds; sizeFrom = Cursor.Position; }   // resized onto another screen: go on from here
+            sizer.Restart();   // resized onto another screen: go on from here
         }
 
         protected override void OnResize(EventArgs e)
@@ -133,20 +135,21 @@ namespace NoteSpin
 
         // The page covers everything but the edge, so only the edge reaches here: it resizes the window.
         // Windows is told which part of the edge the mouse is on, but the arrows and the resizing are done
-        // here: Windows' own only work on windows with a sizing frame, which this hasn't.
+        // here (EdgeSizer): Windows' own only work on windows with a sizing frame, which this hasn't.
         protected override void WndProc(ref Message m)
         {
+            if (sizer.Handle(ref m)) return;
             switch (m.Msg)
             {
                 case Native.WM_NCHITTEST:
                     base.WndProc(ref m);
-                    if ((int)m.Result == Native.HTCLIENT) m.Result = (IntPtr)EdgeAt(PointToClient(LParamPoint(m.LParam)));
+                    if ((int)m.Result == Native.HTCLIENT) m.Result = (IntPtr)EdgeAt(PointToClient(EdgeSizer.LParamPoint(m.LParam)));
                     return;
                 case Native.WM_SETCURSOR:   // the mouse is over the window: the arrows on the edge, before it's pressed
                     int over = (short)(m.LParam.ToInt64() & 0xFFFF);
-                    if (sizing == 0 && over >= Native.HTLEFT && over <= Native.HTBOTTOMRIGHT && WindowState == FormWindowState.Normal)
+                    if (sizer.Edge == 0 && over >= Native.HTLEFT && over <= Native.HTBOTTOMRIGHT && WindowState == FormWindowState.Normal)
                     {
-                        Cursor.Current = SizeCursor(over);
+                        Cursor.Current = EdgeSizer.CursorFor(over);
                         m.Result = (IntPtr)1;
                         return;
                     }
@@ -156,28 +159,12 @@ namespace NoteSpin
                     int edge = (int)m.WParam;
                     if (edge >= Native.HTLEFT && edge <= Native.HTBOTTOMRIGHT)
                     {
-                        if (WindowState == FormWindowState.Normal) StartSizing(edge, LParamPoint(m.LParam));   // screen pixels
+                        if (WindowState == FormWindowState.Normal) sizer.Start(edge, EdgeSizer.LParamPoint(m.LParam));   // screen pixels
                         return;
                     }
                     break;
-                case Native.WM_MOUSEMOVE:
-                    if (sizing != 0) { SizeTo(PointToScreen(LParamPoint(m.LParam))); return; }   // client pixels
-                    break;
-                case Native.WM_LBUTTONUP:
-                    if (sizing != 0) { EndSizing(); return; }
-                    break;
-                case Native.WM_CAPTURECHANGED:
-                    if (sizing != 0) EndSizing();   // something else took the mouse
-                    break;
             }
             base.WndProc(ref m);
-        }
-
-        // the point in a mouse message (screen pixels for the edge, client pixels inside)
-        static Point LParamPoint(IntPtr lParam)
-        {
-            long lp = lParam.ToInt64();
-            return new Point((short)(lp & 0xFFFF), (short)((lp >> 16) & 0xFFFF));
         }
 
         /// <summary>Which part of the edge a point (client pixels) is on: HTLEFT … HTBOTTOMRIGHT, or HTCLIENT.</summary>
@@ -193,52 +180,7 @@ namespace NoteSpin
                 : bottom ? Native.HTBOTTOM : Native.HTCLIENT;
         }
 
-        /* ---------- resizing from the edge ---------- */
-
-        int sizing;            // the part of the edge being dragged (HTLEFT … HTBOTTOMRIGHT), 0 when not resizing
-        Point sizeFrom;        // where the mouse was then (screen pixels)
-        Rectangle sizeStart;   // and the window
-
-        static bool OnLeft(int e) => e == Native.HTLEFT || e == Native.HTTOPLEFT || e == Native.HTBOTTOMLEFT;
-        static bool OnRight(int e) => e == Native.HTRIGHT || e == Native.HTTOPRIGHT || e == Native.HTBOTTOMRIGHT;
-        static bool OnTop(int e) => e == Native.HTTOP || e == Native.HTTOPLEFT || e == Native.HTTOPRIGHT;
-        static bool OnBottom(int e) => e == Native.HTBOTTOM || e == Native.HTBOTTOMLEFT || e == Native.HTBOTTOMRIGHT;
-
-        static Cursor SizeCursor(int e) =>
-            e == Native.HTLEFT || e == Native.HTRIGHT ? Cursors.SizeWE : e == Native.HTTOP || e == Native.HTBOTTOM ? Cursors.SizeNS
-            : e == Native.HTTOPLEFT || e == Native.HTBOTTOMRIGHT ? Cursors.SizeNWSE : Cursors.SizeNESW;
-
-        void StartSizing(int edge, Point screen)
-        {
-            sizing = edge;
-            sizeFrom = screen;
-            sizeStart = Bounds;
-            Capture = true;   // the mouse stays ours until it's let go, even off the window
-            Cursor.Current = SizeCursor(edge);
-        }
-
-        // The dragged sides follow the mouse; the others stay put. Never smaller than the smallest size.
-        void SizeTo(Point screen)
-        {
-            int dx = screen.X - sizeFrom.X, dy = screen.Y - sizeFrom.Y;
-            var r = sizeStart;
-            int left = r.Left, top = r.Top, right = r.Right, bottom = r.Bottom, minW = MinimumSize.Width, minH = MinimumSize.Height;
-            if (OnLeft(sizing)) left = Math.Min(r.Left + dx, right - minW);
-            if (OnRight(sizing)) right = Math.Max(r.Right + dx, left + minW);
-            if (OnTop(sizing)) top = Math.Min(r.Top + dy, bottom - minH);
-            if (OnBottom(sizing)) bottom = Math.Max(r.Bottom + dy, top + minH);
-            var to = Rectangle.FromLTRB(left, top, right, bottom);
-            if (to != Bounds) Bounds = to;
-            Cursor.Current = SizeCursor(sizing);
-        }
-
-        void EndSizing()
-        {
-            if (sizing == 0) return;
-            sizing = 0;
-            Capture = false;
-            SavePlacement();
-        }
+        readonly EdgeSizer sizer;   // resizing from the edge
 
         /* ---------- where it goes ---------- */
 

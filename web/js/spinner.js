@@ -696,14 +696,15 @@ export class Spinner {
 
   /**
    * The space around the cards: solid (1), or see-through, keeping this much (0 to 1) of the dark
-   * background over whatever the window shows behind it. See-through, the desk goes and its shadows stay.
+   * background over whatever the window shows behind it. See-through, the desk goes and its shadows stay,
+   * unless shadows is false (they reach well beyond the frame, so a tight window cuts them off).
    */
-  setBackground(alpha) {
+  setBackground(alpha, {shadows = true} = {}) {
     const clear = alpha < 1;
     this.scene.background = clear ? null : new THREE.Color(BG);
     this.renderer.setClearColor(BG, clear ? clamp(alpha, 0, 1) : 1);
     this.desk.visible = !clear;
-    this.deskShadows.visible = clear;
+    this.deskShadows.visible = clear && shadows;
     this.wake();
   }
 
@@ -716,6 +717,23 @@ export class Spinner {
     this.mount.visible = !hidden;
     if (hidden) this.theta = 0;
     this.resize();
+  }
+
+  /**
+   * The narrowest the view can be (CSS pixels) and still show everything at the size it's shown now. The view
+   * is fitted to whichever of its width and height is tighter, so a wide one has room to spare at the sides.
+   */
+  snugWidth() {
+    // measured straight on, as fit() does (the view may be turned sideways just now)
+    const cam = this.camera.clone();
+    cam.position.copy(this.lookAt).addScaledVector(new THREE.Vector3(0, Math.sin(this.phi), Math.cos(this.phi)), this.dist);
+    cam.lookAt(this.lookAt);
+    cam.updateMatrixWorld();
+    cam.updateProjectionMatrix();
+    const v = new THREE.Vector3();
+    let x = 0;
+    for (const p of this.fitPoints) x = Math.max(x, Math.abs(v.copy(p).project(cam).x));
+    return Math.ceil(this.host.clientWidth * Math.min(1, x / 0.93)) + 2;
   }
 
   wake() {

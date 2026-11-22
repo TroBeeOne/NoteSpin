@@ -119,6 +119,50 @@ namespace NoteSpin
             form.SetNarrow(hidden);
         });
 
+#if !LINUX
+        /* ---------- the window frame hidden (Settings; see MainForm) ----------
+           The Linux build doesn't have these yet: there, FrameInfo answers null and the page leaves the setting out. */
+
+        /// <summary>For the page as it starts (synchronously): {hidden}, whether the window started without its frame.</summary>
+        public string FrameInfo() => Do(() =>
+        {
+            MainPageOnly();
+            return new Dictionary<string, object> { ["hidden"] = form.Frameless };
+        });
+
+        /// <summary>
+        /// The frame hidden or shown, with where the page's parts are (CSS pixels): the cards' box starts at
+        /// (cardsLeft, cardsTop), the part shown at (shownLeft, shownTop). fitWidth: narrow the cards' box to this
+        /// (0: leave it). Whether the frame is hidden now.
+        /// </summary>
+        public string FrameSet(bool hidden, double cardsLeft, double cardsTop, double shownLeft, double shownTop, double fitWidth) => Do(() =>
+        {
+            MainPageOnly();
+            return form.SetFrame(hidden, cardsLeft, cardsTop, shownLeft, shownTop, fitWidth);
+        });
+
+        /// <summary>Moves the window with the pointer that's down on the page (mouse: a mouse, not a finger). Whether it moved.</summary>
+        public string FrameDrag(bool mouse) => Do(() =>
+        {
+            MainPageOnly();
+            return form.DragWindow(mouse);
+        });
+
+        /// <summary>Resizes the window from one of the page's edges ("left", "topright", …) while the pointer is down.</summary>
+        public string FrameSize(string edge, bool mouse) => Do(() =>
+        {
+            MainPageOnly();
+            form.SizeWindow(edge, mouse);
+        });
+
+        /// <summary>"minimize" or "close", from the title strip.</summary>
+        public string FrameCommand(string what) => Do(() =>
+        {
+            MainPageOnly();
+            form.WindowCommand(what);
+        });
+#endif
+
         public string ShowFolder(string which) => Do(() =>
         {
             string dir = which == "safety" ? lib.SafetyDir : lib.NotebooksDir;

@@ -62,8 +62,10 @@ function applyNotebook(st) {
   state.defaultDir = st.defaultDir;
   $('nbName').textContent = st.current.name;
   $('nbBtn').title = `${st.current.name}\n${st.current.path}\n\nNotebooks and backups`;
-  // the window's title bar: the notebook, and where its file is
+  // the window's title bar: the notebook, and where its file is (with the frame hidden, the title strip: the notebook)
   document.title = `${st.current.name} — ${st.current.path} — NoteSpin`;
+  $('stripTitle').textContent = `${st.current.name} — NoteSpin`;
+  $('stripTitle').title = st.current.path;
 }
 
 const inOneDrive = p => /\\OneDrive( - [^\\]+)?(\\|$)/i.test(p || '');
@@ -249,6 +251,16 @@ function setCollapsed(on, remember = true) {
   $('collapseBtn').innerHTML = `<svg><use href="#i-${on ? 'expand' : 'collapse'}"/></svg>`;
   $('collapseBtn').title = on ? 'Show the panel' : 'Hide the panel';
   if (remember) NS.prefSet('collapsed', on ? '1' : '0');
+  if (frameHidden()) reportFrame();   // the part of the window shown starts where the panel does
+}
+
+// Narrow windows fold the panel away, and unfold it again when there's room. Not with the window frame hidden:
+// the panel has room of its own there, beside the cards.
+let panelFoldedForRoom = false;
+function fitPanel() {
+  const narrow = !frameHidden() && innerWidth < 760;
+  if (narrow && !document.body.classList.contains('collapsed')) { panelFoldedForRoom = true; setCollapsed(true, false); }
+  else if (!narrow && panelFoldedForRoom) { panelFoldedForRoom = false; setCollapsed(NS.prefGet('collapsed') === '1', false); }
 }
 
 function setSound(on) {
@@ -271,13 +283,19 @@ function seeThroughLevel() {
 
 // The space around the cards: see-through (what's behind the window shows under `level` % of the dark
 // background) or solid. Windows goes see-through before the page does, and solid after it, so the page
-// is never transparent over nothing. Whether it's see-through now.
-async function setSeeThrough(on, level = seeThroughLevel()) {
+// is never transparent over nothing. Whether it's see-through now. shadows: the stand's shadows stay.
+async function setSeeThrough(on, level = seeThroughLevel(), {shadows = true} = {}) {
   const ok = on && await NS.call('SeeThroughSet', true).catch(() => false) === true;
   document.body.classList.toggle('see-through', ok);
-  spinner.setBackground(ok ? level / 100 : 1);
+  spinner.setBackground(ok ? level / 100 : 1, {shadows});
   if (!ok) await NS.call('SeeThroughSet', false).catch(() => {});
   return ok;
+}
+
+// The space around the cards: clear with the window frame hidden, else as Settings → Background has it.
+// Clear, the stand's shadow on the desktop goes too: the window's edge, close around the cards, would cut it off.
+function applyBackground() {
+  return frameHidden() ? setSeeThrough(true, 0, {shadows: false}) : setSeeThrough(seeThroughOn());
 }
 
 /* ---------- the spinner base hidden (Settings) ---------- */
@@ -289,6 +307,94 @@ function setBaseHidden(on) {
   spinner.setBaseHidden(on);
   $('viewBtn').hidden = on;
   NS.call('BaseHiddenSet', on).catch(() => {});
+}
+
+/* ---------- the window frame hidden (Settings) ----------
+   No title bar or border, and clear around the cards, so they seem to stand on the desktop. The panel and a
+   title strip above it and the cards (the toolbar) come and go: with them hidden, a small button by the cards
+   brings them back, or moves the window when it's dragged. The page keeps room for the toolbar to the left of
+   the cards and above them (the CSS for body.frameless); the app shows only the part in use (see MainForm). */
+
+let frameCapable = false;   // the app can hide its frame (not the Linux build yet: there FrameInfo answers null)
+const frameHidden = () => document.body.classList.contains('frameless');
+const barOut = () => document.body.classList.contains('bar-out');
+
+// Where the page's parts are, in CSS pixels: the cards' box, and the part of the window shown (with the
+// toolbar out or not)
+function frameLayout(out = barOut()) {
+  const cs = getComputedStyle(document.body), px = name => parseFloat(cs.getPropertyValue(name)) || 0;
+  const left = px('--pwmax'), top = px('--strip');
+  return {left, top, shownLeft: out ? left - px('--pw') : left, shownTop: out ? 0 : top};
+}
+
+// Tells the app where the parts are now (fitWidth: make the cards' box this narrow, if it's wider)
+function reportFrame(fitWidth = 0) {
+  const l = frameLayout();
+  return NS.call('FrameSet', frameHidden(), l.left, l.top, l.shownLeft, l.shownTop, fitWidth).catch(() => false);
+}
+
+// A wide box has room to spare at the sides of the cards: the window gives it up (the cards stay the same size)
+function fitFrameToCards() {
+  // once the spinner has been fitted to its new size
+  setTimeout(() => requestAnimationFrame(() => {
+    const w = spinner.snugWidth();
+    if (frameHidden() && w < $('stage').clientWidth - 4) reportFrame(w);
+  }), 120);
+}
+
+async function setFrameHidden(on) {
+  if (on === frameHidden()) return;
+  if (on) {
+    document.body.classList.add('frameless', 'bar-out');
+    NS.prefSet('frameBar', '1');
+    await applyBackground();
+    fitPanel();   // a panel folded for room unfolds: it has room of its own now
+    await reportFrame();
+    fitFrameToCards();
+  } else {
+    // the frame goes back around the panel and the cards, where they are with the toolbar out
+    const l = frameLayout(true);
+    await NS.call('FrameSet', false, l.left, l.top, l.shownLeft, l.shownTop, 0).catch(() => {});
+    document.body.classList.remove('frameless', 'bar-out');
+    fitPanel();
+    await applyBackground();
+  }
+}
+
+function setBar(out) {
+  if (out === barOut()) return;
+  document.body.classList.toggle('bar-out', out);
+  NS.prefSet('frameBar', out ? '1' : '0');
+  reportFrame();
+  if (!out) spinner.renderer.domElement.focus();
+}
+
+function wireFrame() {
+  // the title strip moves the window; its buttons hide the toolbar, minimize and close
+  $('titleStrip').addEventListener('pointerdown', e => {
+    if (e.button !== 0 || e.target.closest('button')) return;
+    e.preventDefault();
+    NS.call('FrameDrag', e.pointerType === 'mouse').catch(() => {});
+  });
+  $('barHideBtn').addEventListener('click', () => setBar(false));
+  $('minBtn').addEventListener('click', () => NS.call('FrameCommand', 'minimize').catch(() => {}));
+  $('closeBtn').addEventListener('click', () => NS.call('FrameCommand', 'close').catch(() => {}));
+  // the button by the cards: a click brings the toolbar out, a drag moves the window
+  const show = $('barShowBtn');
+  show.addEventListener('pointerdown', async e => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const moved = await NS.call('FrameDrag', e.pointerType === 'mouse').catch(() => false);
+    if (!moved) setBar(true);
+  });
+  show.addEventListener('click', e => { if (e.detail === 0) setBar(true); });   // the keyboard
+  // the edges resize the window
+  $('frameEdges').addEventListener('pointerdown', e => {
+    const edge = e.target.dataset.edge;
+    if (e.button !== 0 || !edge) return;
+    e.preventDefault();
+    NS.call('FrameSize', edge, e.pointerType === 'mouse').catch(() => {});
+  });
 }
 
 /* ---------- search ---------- */
@@ -337,6 +443,7 @@ function clearSearch() {
 }
 
 function focusSearch() {
+  if (frameHidden() && !barOut()) setBar(true);
   if (document.body.classList.contains('collapsed')) setCollapsed(false, false);
   $('searchInput').focus();
   $('searchInput').select();
@@ -1053,13 +1160,18 @@ async function showSettings() {
       <label class="check"><input type="checkbox" id="hideBase"${baseHiddenOn() ? ' checked' : ''}> Hide the spinner base</label>
       <p class="hint">Only the cards show, without the frame, knobs and stand, so the window can be made narrower. The
       cards turn and fall as before; dragging sideways no longer turns the view.</p>
+      ${frameCapable ? `<h3>Window</h3>
+      <label class="check"><input type="checkbox" id="hideFrame"${frameHidden() ? ' checked' : ''}> Hide the window frame</label>
+      <p class="hint">No title bar or border, and the space around the cards is clear, so they seem to stand on the
+      desktop. <svg class="inline-icon"><use href="#i-toolbar"/></svg> on the strip at the top hides this panel and the
+      strip too; the small button by the cards brings them back, or moves NoteSpin when you drag it. With them out,
+      drag the strip to move NoteSpin and its edges to resize it.</p>` : ''}
       <h3>Background</h3>
       <label class="check"><input type="checkbox" id="seeThrough"${seeThroughOn() ? ' checked' : ''}> See-through background around the cards</label>
       <div class="range-row${seeThroughOn() ? '' : ' off'}" id="seeRow"><span>Opacity</span>
         <input type="range" id="seeLevel" min="${SEE_LEVEL.min}" max="${SEE_LEVEL.max}" step="5" value="${seeThroughLevel()}"${seeThroughOn() ? '' : ' disabled'} aria-label="Opacity of the background">
         <output id="seeLevelText">${seeThroughLevel()}%</output></div>
-      <p class="hint">The desktop, and any window behind NoteSpin, shows through the space around the cards. The higher
-      the opacity, the darker and more solid that space is. The panel, the cards and open notes stay solid.</p>
+      <p class="hint" id="seeHint"></p>
       ${isLinux ? '' : `<h3>Microsoft Sticky Notes</h3>
       <p class="hint">Copy notes from the Sticky Notes app into this notebook, picking which ones. Sticky Notes isn't changed.</p>
       <div class="row-btns" style="margin-bottom:4px"><button class="btn" type="button" id="stickyBtn">Import from Sticky Notes…</button></div>`}
@@ -1096,14 +1208,33 @@ async function showSettings() {
       box.querySelector('#hideBase').addEventListener('change', e => {
         setBaseHidden(e.target.checked);
         NS.prefSet('hideBase', e.target.checked ? '1' : '0');
+        if (frameHidden()) fitFrameToCards();
       });
       const seeBox = box.querySelector('#seeThrough'), seeLevel = box.querySelector('#seeLevel'), seeRow = box.querySelector('#seeRow');
+      // with the window frame hidden it's always clear: the setting waits for the frame to come back
+      const seeState = () => {
+        const fixed = frameHidden(), on = seeBox.checked && !fixed;
+        seeBox.disabled = fixed;
+        seeLevel.disabled = !on;
+        seeRow.classList.toggle('off', !on);
+        box.querySelector('#seeHint').textContent = fixed ? 'Always clear while the window frame is hidden.'
+          : 'The desktop, and any window behind NoteSpin, shows through the space around the cards. The higher the ' +
+            'opacity, the darker and more solid that space is. The panel, the cards and open notes stay solid.';
+      };
+      seeState();
       seeBox.addEventListener('change', async () => {
         const ok = await setSeeThrough(seeBox.checked, +seeLevel.value);
         if (seeBox.checked && !ok) { seeBox.checked = false; toast(isLinux ? "Your desktop didn't let the window go see-through." : "Windows didn't let the window go see-through."); }
         NS.prefSet('seeThrough', ok ? '1' : '0');
-        seeLevel.disabled = !ok;
-        seeRow.classList.toggle('off', !ok);
+        seeState();
+      });
+      box.querySelector('#hideFrame')?.addEventListener('change', async e => {
+        e.target.disabled = true;
+        await setFrameHidden(e.target.checked);
+        NS.prefSet('hideFrame', frameHidden() ? '1' : '0');
+        e.target.checked = frameHidden();
+        e.target.disabled = false;
+        seeState();
       });
       seeLevel.addEventListener('input', () => {
         box.querySelector('#seeLevelText').textContent = seeLevel.value + '%';
@@ -1276,15 +1407,9 @@ function wire() {
     if (p) importFile(p);
   });
 
-  // narrow windows fold the panel away (and unfold it again when there's room)
-  let auto = false;
-  const fit = () => {
-    const narrow = innerWidth < 760;
-    if (narrow && !document.body.classList.contains('collapsed')) { auto = true; setCollapsed(true, false); }
-    else if (!narrow && auto) { auto = false; setCollapsed(NS.prefGet('collapsed') === '1', false); }
-  };
-  addEventListener('resize', fit);
-  fit();
+  addEventListener('resize', fitPanel);
+  fitPanel();
+  wireFrame();
 }
 
 // After NoteSpin restarted to turn portable on or off (see PortableSwitch)
@@ -1321,9 +1446,15 @@ async function start() {
   spinner.renderer.domElement.tabIndex = 0;
   spinner.renderer.domElement.setAttribute('aria-label', 'Note cards: arrow keys turn, Enter opens');
   editor = new Editor(app);
+  // the window frame hidden: the app started without it (and told the page so in its address)
+  let frame = null;
+  try { frame = NS.callSync('FrameInfo'); } catch { /* an app that can't hide it */ }
+  frameCapable = !!frame;
+  document.body.classList.toggle('frameless', !!frame?.hidden);
+  document.body.classList.toggle('bar-out', !!frame?.hidden && NS.prefGet('frameBar') === '1');
   setCollapsed(NS.prefGet('collapsed') === '1', false);
   setSound(NS.prefGet('sound') !== '0');
-  if (seeThroughOn()) setSeeThrough(true);
+  if (seeThroughOn() || frameHidden()) applyBackground();
   if (baseHiddenOn()) setBaseHidden(true);
   wire();
   try {

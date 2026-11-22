@@ -86,6 +86,20 @@ is framed around them alone, so the window can be made much narrower (down to ab
 you like. Dragging sideways no longer turns the view, and the straighten button goes. It works with the
 see-through background too.
 
+**Hide the window frame** (Windows). *Settings → Window → Hide the window frame* takes away the title bar and
+border, and makes the space around the cards completely clear, so the wheel seems to stand on the desktop. When
+it's turned on, the window's sides draw in to the cards (they stay the same size). The panel stays, with a
+dark strip above it and the cards in place of the title bar: drag the strip to move NoteSpin and the edges to
+resize it. Its buttons minimize, close, and (the first one, a little window with a side panel) hide the
+"toolbar", meaning the panel and the strip. With the toolbar hidden, NoteSpin is just the cards in their box.
+Click the small button at the box's top-left corner to bring the toolbar back, or drag that button to move
+NoteSpin. The toolbar comes and goes without the cards moving, unless they're close to the left or top of
+the screen: then they move over to make room, and go back when it hides. Only the box takes clicks; around it,
+clicks reach the desktop. The stand's shadow on the desktop is left out in this mode, as the edge of the box
+would cut it off. Notes over the cards, note windows, and everything else work as usual. It's still a normal
+window: on the taskbar, in Alt+Tab, and minimized by Win+D. It can't be maximized. Turn the setting off and the
+frame comes back around the panel and cards.
+
 ## Writing notes
 
 - **The first line is the title.** It's what the card shows in large type, and what A–Z order sorts by.
@@ -282,6 +296,7 @@ same web interface and `.notespin` SQLite notebook format as Windows.
   button instead) and client-side always-on-top pinning aren't available natively on Wayland (on GNOME you can use
   `Alt+Space → Always on Top`, or launch under XWayland with `GDK_BACKEND=x11 ./NoteSpin`). Microsoft Sticky Notes
   import is Windows-only.
+- **Hide the window frame** isn't in the Linux build yet, so Settings doesn't offer it there.
 
 ## Keyboard, mouse and touch
 
@@ -309,6 +324,8 @@ same web interface and `.notespin` SQLite notebook format as Windows.
 | Drop a note window on the front card | Put the note back |
 | Drop a `.notespin` file on the window | Import it |
 | Drop `.txt` files on the window | Make a note of each (after asking) |
+| *Window frame hidden:* drag the strip at the top, or its edges | Move NoteSpin, or resize it |
+| *Window frame hidden:* click (or drag) the small button by the cards | Bring the toolbar back (or move NoteSpin) |
 
 ## Questions
 
@@ -380,10 +397,19 @@ host object, and the C# side passes notes and messages between them (`NoteWin…
 (`exportState`/`openState` in `editor.js`), including the key of an unlocked note, so only one window ever has
 it open.
 
-- **C#:** `src\MainForm.cs` (main window, its see-through background and narrower minimum with the spinner
-  base hidden, Windows dialogs, the note windows
+With the window frame hidden, the main window loses its title bar and border, and the page keeps room to the
+left of the cards and above them for the panel and title strip (`body.frameless` in `app.css`). The window
+takes in that room too, but `MainForm` keeps only the part the page shows (a window region): the cards' box
+with the toolbar hidden, all of it with the toolbar out. So the toolbar comes and goes without the window
+changing size (a web view resized from its left or top edge shows its old picture in the wrong place for a
+moment), and outside the region, clicks reach whatever is behind. The page reports its layout with
+`FrameSet`, and moves or resizes the window with `FrameDrag` and `FrameSize`.
+
+- **C#:** `src\MainForm.cs` (main window, its see-through background, narrower minimum with the spinner
+  base hidden and hidden frame, Windows dialogs, the note windows
   and the drop target for them),
   `src\NoteWindow.cs` (a note window: resizing, moving, following a drag, its place and pin),
+  `src\EdgeSizer.cs` (resizing a window without a frame from its edges, for both),
   `src\StickyNotes.cs` (reading a copy of Microsoft Sticky Notes' notes), `src\PageHost.cs` (the web view
   in each window: serving the page, what it may open), `src\Native.cs` (the few Windows calls needed),
   `src\HostApi.cs` (what the pages can call),

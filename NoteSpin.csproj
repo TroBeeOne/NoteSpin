@@ -46,7 +46,7 @@
   </ItemGroup>
 
   <ItemGroup Condition="!$([MSBuild]::IsOSPlatform('Windows'))">
-    <Compile Remove="src/MainForm.cs;src/NoteWindow.cs;src/PageHost.cs;src/Native.cs;src/FolderPicker.cs;src/FileAssoc.cs;src/Program.cs" />
+    <Compile Remove="src/MainForm.cs;src/NoteWindow.cs;src/PageHost.cs;src/Native.cs;src/EdgeSizer.cs;src/FolderPicker.cs;src/FileAssoc.cs;src/Program.cs" />
   </ItemGroup>
 
   <ItemGroup>
