@@ -46,7 +46,7 @@ namespace NoteSpin
             narrow = settings.Get("pref:hideBase") == "1";
             // with the frame hidden, clear from the start (the page says so again once it's up)
             frameless = seeThrough = settings.Get("pref:hideFrame") == "1";
-            BackColor = frameless ? Color.Black : Bg;   // black is clear where the window is see-through
+            BackColor = seeThrough ? Color.Black : Bg;   // black is clear where the window is see-through
             FitMinimumSize();
             sizer = new EdgeSizer(this);
             page = new PageHost(this, frameless ? Color.Transparent : Bg);
@@ -425,8 +425,20 @@ namespace NoteSpin
             seeThrough = on && Native.SeeThrough(Handle, true);
             if (!seeThrough) Native.SeeThrough(Handle, false);
             if (page.Controller != null) page.Controller.DefaultBackgroundColor = seeThrough ? Color.Transparent : Bg;
+            BackColor = seeThrough ? Color.Black : Bg;   // black is clear where the window is see-through
+            if (seeThrough) Native.ClearUnderChildren(Handle);
             Invalidate();
             return seeThrough;
+        }
+
+        // After the frame comes or goes: see-through set again, as for a new window. Windows keeps the frame the
+        // window had when it was turned on (a frame put back after it was hidden came out see-through too).
+        void RefreshSeeThrough()
+        {
+            if (!seeThrough) return;
+            Native.SeeThrough(Handle, false);
+            Native.SeeThrough(Handle, true);
+            Native.ClearUnderChildren(Handle);
         }
 
         protected override void OnHandleCreated(EventArgs e)
@@ -467,6 +479,7 @@ namespace NoteSpin
             base.OnResize(e);
             page?.Fit();
             if (frameless && WindowState == FormWindowState.Normal) ShowOnlyShown();
+            if (seeThrough && IsHandleCreated && WindowState != FormWindowState.Minimized) Native.ClearUnderChildren(Handle);
         }
 
         protected override void WndProc(ref Message m)
@@ -534,7 +547,8 @@ namespace NoteSpin
                 return false;
             }
             Rectangle cards;
-            if (!frameless)
+            bool coming = !frameless;
+            if (coming)
             {
                 if (WindowState == FormWindowState.Maximized) WindowState = FormWindowState.Normal;
                 // framed, the page starts with the panel: the cards' box starts where it ends
@@ -561,6 +575,7 @@ namespace NoteSpin
                 PlaceAround(cards);
             }
             ShowOnlyShown();
+            if (coming) RefreshSeeThrough();
             return true;
         }
 
@@ -584,7 +599,7 @@ namespace NoteSpin
             var keep = Rectangle.FromLTRB(Left + Px(panelLeft), Top + Px(stripHeight), Right, Bottom);
             frameless = false;
             Native.ShowOnly(Handle, null);
-            BackColor = Bg;
+            BackColor = seeThrough ? Color.Black : Bg;
             UpdateStyles();
             FitMinimumSize();
             Rectangle b = Bounds, c = RectangleToScreen(ClientRectangle);
@@ -592,6 +607,7 @@ namespace NoteSpin
             var wa = Screen.FromRectangle(keep).WorkingArea;
             if (r.Top < wa.Top) r.Offset(0, wa.Top - r.Top);   // the title bar on the screen
             Bounds = r;
+            RefreshSeeThrough();   // still see-through: the page says next whether it stays so
             Invalidate();
         }
 

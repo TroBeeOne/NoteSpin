@@ -32,6 +32,13 @@ namespace NoteSpin
         [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hWnd, int attr, out int value, int size);
         [DllImport("dwmapi.dll")] static extern int DwmEnableBlurBehindWindow(IntPtr hWnd, ref DWM_BLURBEHIND blurBehind);
         [DllImport("user32.dll")] static extern int SetWindowRgn(IntPtr hWnd, IntPtr region, bool redraw);
+        [DllImport("user32.dll")] static extern IntPtr GetDCEx(IntPtr hWnd, IntPtr clip, uint flags);
+        [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr hWnd, IntPtr dc);
+        [DllImport("user32.dll")] static extern bool GetClientRect(IntPtr hWnd, out RECT rect);
+        [DllImport("user32.dll")] static extern int FillRect(IntPtr dc, ref RECT rect, IntPtr brush);
+        [DllImport("gdi32.dll")] static extern IntPtr GetStockObject(int kind);
+        const uint DCX_CACHE = 0x2;
+        const int BLACK_BRUSH = 4;
         [DllImport("gdi32.dll")] static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
         [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr obj);
 
@@ -61,6 +68,20 @@ namespace NoteSpin
             try { return DwmEnableBlurBehindWindow(hWnd, ref bb) == 0; }
             catch { return false; }
             finally { if (none != IntPtr.Zero) DeleteObject(none); }
+        }
+
+        /// <summary>
+        /// Paints a see-through window's whole client area clear (black, which is clear there), the part under its
+        /// child windows too. The web view draws above that, and where the page is transparent, whatever the window
+        /// painted before (its dark background, before the page was up or while it was solid) would otherwise show
+        /// faintly over the desktop.
+        /// </summary>
+        public static void ClearUnderChildren(IntPtr hWnd)
+        {
+            IntPtr dc = GetDCEx(hWnd, IntPtr.Zero, DCX_CACHE);   // no DCX_CLIPCHILDREN: under the children as well
+            if (dc == IntPtr.Zero) return;
+            try { if (GetClientRect(hWnd, out RECT r)) FillRect(dc, ref r, GetStockObject(BLACK_BRUSH)); }
+            finally { ReleaseDC(hWnd, dc); }
         }
 
         /// <summary>
