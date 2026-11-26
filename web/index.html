@@ -22,6 +22,16 @@
 </header>
 <!-- and with the toolbar hidden, a small button by the cards: click it for the toolbar, drag it to move NoteSpin -->
 <button id="barShowBtn" class="bar-show" title="Show the toolbar (drag to move NoteSpin)" aria-label="Show the toolbar"><svg><use href="#i-toolbar"/></svg></button>
+<!-- beside it, search: a search box of its own above the cards, the toolbar staying hidden -->
+<button id="findShowBtn" class="bar-show find-show" title="Search notes (Ctrl+F)" aria-label="Search notes"><svg><use href="#i-search"/></svg></button>
+<header id="findStrip" class="find-strip" role="search">
+  <div class="find-box">
+    <svg><use href="#i-search"/></svg>
+    <input id="findInput" type="search" placeholder="Search notes" spellcheck="false" autocomplete="off" aria-label="Search notes">
+    <span id="findInfo" class="find-info" aria-live="polite"></span>
+    <button id="findClose" class="icon-btn small" title="Clear the search and close (Esc)" aria-label="Clear the search and close"><svg><use href="#i-x"/></svg></button>
+  </div>
+</header>
 <!-- the window's edges, for resizing it while the toolbar is out -->
 <div id="frameEdges" class="frame-edges" aria-hidden="true">
   <div data-edge="left"></div><div data-edge="right"></div><div data-edge="top"></div><div data-edge="bottom"></div>

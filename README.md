@@ -58,6 +58,16 @@ What you see:
 | **The card in front, lying down** | The note before. Its writing shows faintly through the paper, reversed. |
 | **The knobs** | They turn with the drum and take on the colour of the card at the front. |
 
+**Or the scroll.** *Settings → Spinner → Style → Scroll* shows the same cards another way: no base, just the
+cards rolling round an unseen drum lying on its side. The front card faces you; the cards before it curve away
+above it and the next ones below, so they read down the screen like a list, fading out as they go over the top
+and under the bottom. Everything else is as on the card wheel: the mouse wheel, ↑ ↓ and the Previous / Next
+buttons step one card at a time and it settles on a card, the cards follow a drag up or down (flick to spin),
+click a card above or below to bring it forward, click the front card to open it, right-click a card for its
+menu. The categories view, search, the see-through background and the hidden window frame work the same way;
+with the frame hidden, the box draws in to the width of a card. *Card wheel* is the default; NoteSpin remembers
+which one you chose.
+
 Moving around:
 
 - **Mouse wheel**: one notch, one card. Spin it quickly to go further.
@@ -96,7 +106,7 @@ how much of the dark background stays over it (80% to start: mostly dark, the de
 the slider is held, the Settings dialog's shading lifts so you can see the result. The panel, the cards and
 open notes stay solid, and the cards still cast their shadows. Off, the background is solid as before.
 
-**Hide the spinner base.** *Settings → Spinner → Hide the spinner base* shows just the cards, without the
+**Hide the spinner base** (the card wheel). *Settings → Spinner → Hide the spinner base* shows just the cards, without the
 frame, knobs, axle and stand (or their shadows). The cards turn, lean and fall exactly as before, and the view
 is framed around them alone, so the window can be made much narrower (down to about 340 pixels), or as wide as
 you like. Dragging sideways no longer turns the view, and the straighten button goes. It works with the
@@ -104,13 +114,20 @@ see-through background too.
 
 **Hide the window frame** (Windows). *Settings → Window → Hide the window frame* takes away the title bar and
 border, and makes the space around the cards completely clear, so the wheel seems to stand on the desktop. When
-it's turned on, the window's sides draw in to the cards (they stay the same size). The panel stays, with a
-dark strip above it and the cards in place of the title bar: drag the strip to move NoteSpin and the edges to
-resize it. Its buttons minimize, close, and (the first one, a little window with a side panel) hide the
-"toolbar", meaning the panel and the strip. With the toolbar hidden, NoteSpin is just the cards in their box.
-Click the small button at the box's top-left corner to bring the toolbar back, or drag that button to move
-NoteSpin. The toolbar comes and goes without the cards moving, unless they're close to the left or top of
-the screen: then they move over to make room, and go back when it hides. Only the box takes clicks; around it,
+it's turned on, the window's sides draw in to the cards (they stay the same size), and as Settings closes the
+"toolbar" goes too: the panel, and the dark strip above it and the cards that takes the title bar's place.
+NoteSpin is then just the cards in their box. Click the small button at the box's top-left corner to bring the
+toolbar back, or drag that button to move NoteSpin. With the toolbar out, drag the strip to move NoteSpin and
+the edges to resize it; the strip's buttons minimize, close, and (the first one, a little window with a side
+panel) hide the toolbar again. NoteSpin remembers whether the toolbar was out for the next time it starts.
+The toolbar comes and goes without the cards moving, unless they're close to the left or top of the screen:
+then they move over to make room, and go back when it hides.
+
+To search without the toolbar, click the magnifying glass beside the small button (or press **Ctrl+F**): a
+search box of its own opens above the cards. It searches just as the panel's box does, and shows how many
+notes were found. **Esc** clears the search and a second **Esc** closes the box, as does its **×** (closing
+it clears the search). Hiding the toolbar while a search is on opens this box with the search in it, so the
+cards are never narrowed down without it showing. Only the box takes clicks; around it,
 clicks reach the desktop. The stand's shadow on the desktop is left out in this mode, as the edge of the box
 would cut it off. Notes over the cards, note windows, and everything else work as usual. It's still a normal
 window: on the taskbar, in Alt+Tab, and minimized by Win+D. It can't be maximized. Turn the setting off and the
@@ -335,7 +352,7 @@ same web interface and `.notespin` SQLite notebook format as Windows.
 | Home / End | First / last card |
 | Enter or Space | Open the front card (or the category) |
 | Ctrl+N | New note (in a note window: a new note in another window) |
-| Ctrl+F | Search |
+| Ctrl+F | Search (with the window frame and toolbar hidden: the search box above the cards) |
 | Ctrl+G | All notes ↔ Categories |
 | Menu key or Shift+F10 | The front card's menu (open, copy, delete) |
 | Esc | Close the note · clear the search · back to the categories |
@@ -362,6 +379,7 @@ same web interface and `.notespin` SQLite notebook format as Windows.
 | Drop `.txt` files on the window | Make a note of each (after asking) |
 | *Window frame hidden:* drag the strip at the top, or its edges | Move NoteSpin, or resize it |
 | *Window frame hidden:* click (or drag) the small button by the cards | Bring the toolbar back (or move NoteSpin) |
+| *Window frame hidden:* click the magnifying glass beside it | Search, in a box of its own above the cards |
 
 ## Questions
 
@@ -464,7 +482,10 @@ moment), and outside the region, clicks reach whatever is behind. The page repor
   views, search, notebooks, settings, sending notes to note windows, copying from Sticky Notes, notes from
   dropped text files), `notewin.js`
   (a note window's page),
-  `icons.js` (the icons, for both pages), `spinner.js` (the 3D wheel: drum, cards, movement, input), `cardface.js` (drawing a
+  `icons.js` (the icons, for both pages), the views of the cards: `cardview.js` (what they all share: the 3D
+  view, the pool of cards and their faces, turning and settling on a card, dragging, the mouse wheel, clicks and
+  the card menu), `wheelview.js` (the card wheel: drum, frame, falling cards), `scrollview.js` (the scroll), and
+  `views.js` (the list Settings offers; a new view is a file of its own and a line there), `cardface.js` (drawing a
   card), `editor.js` (the note editor, list handling, locking prompts), `notes.js` (what a note is made of,
   category colours), `crypto.js` (locking), `ui.js` (dialogs, menus, messages), `host.js` (the bridge).
 - **A notebook file:** tables `notes` (title = first line, body = the note's HTML, or the encrypted text when

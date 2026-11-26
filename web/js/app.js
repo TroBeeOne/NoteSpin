@@ -1,6 +1,6 @@
 // NoteSpin: the side panel, the views (all notes, categories, one category), search, notebooks and backups.
 
-import {Spinner} from './spinner.js';
+import {VIEWS, DEFAULT_VIEW} from './views.js';
 import {Editor, askPassword, TEXT_SIZES, textSize, setTextSize, showTextSize} from './editor.js';
 import {LockSession} from './crypto.js';
 import {PALETTE, GENERAL_ID, pickColor, analyze, parseHtml, textToBlocks, toText, isRtlText} from './notes.js';
@@ -27,6 +27,7 @@ const state = {
 };
 
 let spinner, editor, searchSeq = 0;
+let viewStyle = DEFAULT_VIEW;   // which view of the cards the spinner is (Settings → Spinner → Style)
 
 // What the editor needs from the app
 const app = {
@@ -188,6 +189,7 @@ function updatePanel() {
   $('searchInfo').innerHTML = state.query && state.matches
     ? (state.matches.size ? `<strong>${plural(state.matches.size, 'note')}</strong> found` : 'Nothing found')
     : '';
+  updateFind();
   updatePosition(spinner.index());
   updateEmpty();
 }
@@ -310,8 +312,44 @@ const baseHiddenOn = () => NS.prefGet('hideBase') === '1';
 // Only the cards show, framed on their own, so the window can be narrower; there's no view to straighten
 function setBaseHidden(on) {
   spinner.setBaseHidden(on);
-  $('viewBtn').hidden = on;
-  NS.call('BaseHiddenSet', on).catch(() => {});
+  cardsOnly(on || !VIEWS[viewStyle].hasBase);
+}
+
+// Just the cards (the base hidden, or a view without one): the window can be narrower, and there's no view to
+// straighten
+function cardsOnly(only) {
+  $('viewBtn').hidden = only;
+  NS.call('BaseHiddenSet', only).catch(() => {});
+}
+
+/* ---------- the view of the cards (Settings → Spinner → Style; views.js) ---------- */
+
+const styleOn = () => VIEWS[NS.prefGet('spinStyle')] ? NS.prefGet('spinStyle') : DEFAULT_VIEW;
+
+function makeView(style) {
+  viewStyle = style;
+  const view = new VIEWS[style].View($('stage'), {onOpen: item => openItem(item), onChange: i => updatePosition(i), onMenu: cardMenu});
+  const el = view.renderer.domElement;
+  el.tabIndex = 0;
+  el.setAttribute('aria-label', 'Note cards: arrow keys turn, Enter opens, the Menu key shows what you can do with the front card');
+  return view;
+}
+
+// Another view of the cards, in place of this one: the same cards, the same one at the front
+async function setStyle(style) {
+  if (style === viewStyle || !VIEWS[style]) return;
+  const keep = spinner.current()?.id, sound = spinner.sound.on, focused = document.activeElement === spinner.renderer.domElement;
+  spinner.dispose();
+  spinner = makeView(style);
+  spinner.setSound(sound);
+  const base = VIEWS[style].hasBase && baseHiddenOn();
+  if (base) spinner.setBaseHidden(true);
+  cardsOnly(base || !VIEWS[style].hasBase);
+  if (seeThroughOn() || frameHidden()) await applyBackground();
+  spinner.setItems(state.items, keep, {titlesBehind: titlesBehind()});
+  updatePosition(spinner.index());
+  if (frameHidden()) fitFrameToCards();
+  if (focused) spinner.renderer.domElement.focus();
 }
 
 /* ---------- the window frame hidden (Settings) ----------
@@ -323,13 +361,14 @@ function setBaseHidden(on) {
 let frameCapable = false;   // whether the host supports hiding the window frame
 const frameHidden = () => document.body.classList.contains('frameless');
 const barOut = () => document.body.classList.contains('bar-out');
+const findOut = () => document.body.classList.contains('find-out');
 
 // Where the page's parts are, in CSS pixels: the cards' box, and the part of the window shown (with the
-// toolbar out or not)
+// toolbar out or not; the search box of its own shows the strip above the cards)
 function frameLayout(out = barOut()) {
   const cs = getComputedStyle(document.body), px = name => parseFloat(cs.getPropertyValue(name)) || 0;
   const left = px('--pwmax'), top = px('--strip');
-  return {left, top, shownLeft: out ? left - px('--pw') : left, shownTop: out ? 0 : top};
+  return {left, top, shownLeft: out ? left - px('--pw') : left, shownTop: out || findOut() ? 0 : top};
 }
 
 // Tells the app where the parts are now (fitWidth: make the cards' box this narrow, if it's wider)
@@ -360,7 +399,7 @@ async function setFrameHidden(on) {
     // the frame goes back around the panel and the cards, where they are with the toolbar out
     const l = frameLayout(true);
     await NS.call('FrameSet', false, l.left, l.top, l.shownLeft, l.shownTop, 0).catch(() => {});
-    document.body.classList.remove('frameless', 'bar-out');
+    document.body.classList.remove('frameless', 'bar-out', 'find-out');
     fitPanel();
     await applyBackground();
   }
@@ -369,9 +408,35 @@ async function setFrameHidden(on) {
 function setBar(out) {
   if (out === barOut()) return;
   document.body.classList.toggle('bar-out', out);
+  // the search box of its own goes when the toolbar comes out (the panel's search has the same words), and
+  // comes when the toolbar goes with a search still on, so the cards aren't left sifted with nothing to say so
+  document.body.classList.toggle('find-out', !out && !!state.query);
+  updateFind();
   NS.prefSet('frameBar', out ? '1' : '0');
   reportFrame();
   if (!out) spinner.renderer.domElement.focus();
+}
+
+/* the search box of its own: with the window frame and the toolbar hidden, the search button by the cards (or
+   Ctrl+F) opens it above them, without bringing the toolbar out. It's the panel's search: the same words, the
+   same results. Closing it clears the search. */
+function setFind(on, {focus = true} = {}) {
+  if (on && (!frameHidden() || barOut())) return;
+  if (!on && state.query) clearSearch();
+  if (on !== findOut()) {
+    document.body.classList.toggle('find-out', on);
+    updateFind();
+    reportFrame();
+  }
+  if (on && focus) { $('findInput').focus(); $('findInput').select(); }
+  if (!on && (document.activeElement === $('findInput') || document.activeElement === $('findClose'))) spinner.renderer.domElement.focus();
+}
+
+// the search box of its own shows what the panel's does: the words, and how many notes were found
+function updateFind() {
+  if ($('findInput').value !== $('searchInput').value) $('findInput').value = $('searchInput').value;
+  $('findInfo').innerHTML = $('searchInfo').innerHTML;
+  $('findStrip').querySelector('.find-box').classList.toggle('active', !!state.query);
 }
 
 function wireFrame() {
@@ -419,6 +484,16 @@ function wireFrame() {
     show.addEventListener('pointercancel', cancel);
   });
   show.addEventListener('click', e => { if (e.detail === 0) setBar(true); });   // the keyboard
+  // search without the toolbar: the button beside it, and the search box it opens (dragging the strip around
+  // the box moves NoteSpin, as the toolbar's strip does)
+  $('findShowBtn').addEventListener('click', () => setFind(true));
+  $('findClose').addEventListener('click', () => setFind(false));
+  $('findInput').addEventListener('input', () => { $('searchInput').value = $('findInput').value; onSearchInput(); });
+  $('findStrip').addEventListener('pointerdown', e => {
+    if (e.button !== 0 || e.target.closest('input, button')) return;
+    e.preventDefault();
+    NS.call('FrameDrag', e.pointerType === 'mouse').catch(() => {});
+  });
   // the edges resize the window
   $('frameEdges').addEventListener('pointerdown', e => {
     const edge = e.target.dataset.edge;
@@ -466,6 +541,7 @@ function onSearchInput() {
 
 function clearSearch() {
   $('searchInput').value = '';
+  $('findInput').value = '';
   const cur = spinner.current()?.id;
   state.query = '';
   state.matches = null;
@@ -474,7 +550,7 @@ function clearSearch() {
 }
 
 function focusSearch() {
-  if (frameHidden() && !barOut()) setBar(true);
+  if (frameHidden() && !barOut()) { setFind(true); return; }   // its own search box, the toolbar staying hidden
   if (document.body.classList.contains('collapsed')) setCollapsed(false, false);
   $('searchInput').focus();
   $('searchInput').select();
@@ -1243,6 +1319,7 @@ async function showSettings() {
   let info;
   try { info = await NS.call('AppInfo'); } catch { info = {}; }
   const assocLabel = on => on ? 'Turn off' : 'Turn on';
+  let frameJustHidden = false;   // the window frame was hidden just now: the toolbar goes too as Settings closes
   await dialog({
     title: 'Settings',
     wide: true,
@@ -1275,15 +1352,20 @@ async function showSettings() {
       top strip, or click <svg class="inline-icon"><use href="#i-popout"/></svg>. Any number of notes can be out at once,
       each in its own window.</p>
       <h3>Spinner</h3>
-      <label class="check"><input type="checkbox" id="hideBase"${baseHiddenOn() ? ' checked' : ''}> Hide the spinner base</label>
-      <p class="hint">Only the cards show, without the frame, knobs and stand, so the window can be made narrower. The
+      <div class="style-row"><span>Style</span>
+        <div class="seg" id="styleSeg" role="radiogroup" aria-label="Style of the spinner">${Object.entries(VIEWS).map(([k, v]) =>
+          `<button type="button" data-style="${k}" role="radio" aria-checked="${k === viewStyle}">${esc(v.label)}</button>`).join('')}</div></div>
+      <p class="hint" id="styleHint">${esc(VIEWS[viewStyle].hint)}</p>
+      <label class="check" id="hideBaseRow"><input type="checkbox" id="hideBase"${baseHiddenOn() ? ' checked' : ''}> Hide the spinner base</label>
+      <p class="hint" id="hideBaseHint">Only the cards show, without the frame, knobs and stand, so the window can be made narrower. The
       cards turn and fall as before; dragging sideways no longer turns the view.</p>
       ${frameCapable ? `<h3>Window</h3>
       <label class="check"><input type="checkbox" id="hideFrame"${frameHidden() ? ' checked' : ''}> Hide the window frame</label>
       <p class="hint">No title bar or border, and the space around the cards is clear, so they seem to stand on the
-      desktop. <svg class="inline-icon"><use href="#i-toolbar"/></svg> on the strip at the top hides this panel and the
-      strip too; the small button by the cards brings them back, or moves NoteSpin when you drag it. With them out,
-      drag the strip to move NoteSpin and its edges to resize it.</p>` : ''}
+      desktop. Once Settings closes, this panel goes too: the small button by the cards brings it back, or moves
+      NoteSpin when you drag it, and <svg class="inline-icon"><use href="#i-search"/></svg> beside it searches without
+      it. With the panel out, drag the strip at the top to move NoteSpin and its edges to resize it;
+      <svg class="inline-icon"><use href="#i-toolbar"/></svg> on the strip hides the panel again.</p>` : ''}
       <h3>Background</h3>
       <label class="check"><input type="checkbox" id="seeThrough"${seeThroughOn() ? ' checked' : ''}> See-through background around the cards</label>
       <div class="range-row${seeThroughOn() ? '' : ' off'}" id="seeRow"><span>Opacity</span>
@@ -1339,6 +1421,20 @@ async function showSettings() {
       sizeReset.addEventListener('click', () => { sizeTo(100); sizeIn.focus(); });
       box.querySelector('#ownWindow').addEventListener('change', e => NS.prefSet('noteWindow', e.target.checked ? '1' : '0'));
       box.querySelector('#stickyBtn')?.addEventListener('click', importStickyNotes);
+      // the style: the other view straight away, behind Settings (hiding the base is for a view with one)
+      const styleState = () => {
+        box.querySelectorAll('#styleSeg button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.style === viewStyle)));
+        box.querySelector('#styleHint').textContent = VIEWS[viewStyle].hint;
+        box.querySelector('#hideBaseRow').hidden = box.querySelector('#hideBaseHint').hidden = !VIEWS[viewStyle].hasBase;
+      };
+      styleState();
+      box.querySelector('#styleSeg').addEventListener('click', async e => {
+        const b = e.target.closest('button[data-style]');
+        if (!b || b.dataset.style === viewStyle) return;
+        await setStyle(b.dataset.style);
+        NS.prefSet('spinStyle', viewStyle);
+        styleState();
+      });
       box.querySelector('#hideBase').addEventListener('change', e => {
         setBaseHidden(e.target.checked);
         NS.prefSet('hideBase', e.target.checked ? '1' : '0');
@@ -1365,6 +1461,7 @@ async function showSettings() {
       box.querySelector('#hideFrame')?.addEventListener('change', async e => {
         e.target.disabled = true;
         await setFrameHidden(e.target.checked);
+        frameJustHidden = frameHidden();
         NS.prefSet('hideFrame', frameHidden() ? '1' : '0');
         e.target.checked = frameHidden();
         e.target.disabled = false;
@@ -1389,6 +1486,8 @@ async function showSettings() {
       box.querySelector('#licLink').addEventListener('click', e => { e.preventDefault(); NS.call('ShowLicenses'); });
     },
   });
+  // just the cards on the desktop, straight away (the button by the cards brings the toolbar back)
+  if (frameJustHidden && frameHidden()) setBar(false);
 }
 
 /* ---------- the first notes in a new install ---------- */
@@ -1432,7 +1531,13 @@ async function addSamples() {
 function onKey(e) {
   if (dialogOpen() || menuOpen() || editor.isOpen) return;
   const el = document.activeElement;
-  const inSearch = el === $('searchInput');
+  // Esc in the search box of its own: clears the search, then closes the box
+  if (el === $('findInput') && e.key === 'Escape') {
+    e.preventDefault();
+    if (state.query || el.value) { clearTimeout(searchTimer); clearSearch(); } else setFind(false);
+    return;
+  }
+  const inSearch = el === $('searchInput') || el === $('findInput');
   const typing = !inSearch && el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable);
   const k = letterKey(e);
   if (e.ctrlKey && !e.altKey && k === 'n') { e.preventDefault(); newNote(); return; }
@@ -1579,9 +1684,7 @@ async function start() {
   }
   state.view = NS.prefGet('view') === 'categories' ? 'categories' : 'all';
   state.order = NS.prefGet('order') === 'recent' ? 'recent' : 'az';
-  spinner = new Spinner($('stage'), {onOpen: item => openItem(item), onChange: i => updatePosition(i), onMenu: cardMenu});
-  spinner.renderer.domElement.tabIndex = 0;
-  spinner.renderer.domElement.setAttribute('aria-label', 'Note cards: arrow keys turn, Enter opens, the Menu key shows what you can do with the front card');
+  spinner = makeView(styleOn());
   editor = new Editor(app);
   // the window frame hidden: the app started without it (and told the page so in its address)
   let frame = null;
@@ -1592,7 +1695,8 @@ async function start() {
   setCollapsed(NS.prefGet('collapsed') === '1', false);
   setSound(NS.prefGet('sound') !== '0');
   if (seeThroughOn() || frameHidden()) applyBackground();
-  if (baseHiddenOn()) setBaseHidden(true);
+  if (VIEWS[viewStyle].hasBase && baseHiddenOn()) setBaseHidden(true);
+  else if (!VIEWS[viewStyle].hasBase) cardsOnly(true);
   wire();
   try {
     await loadNotebook();
@@ -1614,7 +1718,7 @@ async function start() {
       `“${notice.missing}” isn't there (an unplugged drive, perhaps), so NoteSpin is using ${notice.using} for now. It goes back to the chosen folder when it's available again.`);
   }
   window.__nsBusy = () => editor.busy();
-  window.__ns = {state, spinner, editor, app, importFile, openItem, popOut, noteWindowState, closeNoteWindow};   // for testing
+  window.__ns = {state, get spinner() { return spinner; }, editor, app, importFile, openItem, popOut, noteWindowState, closeNoteWindow, setStyle};   // for testing
   const file = await NS.call('TakeStartupFile').catch(() => null);
   if (file) { importFile(file); return; }
   // the notes that were out in their windows when NoteSpin closed go out again

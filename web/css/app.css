@@ -57,6 +57,23 @@ svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; s
   overflow: hidden;
 }
 #stage canvas { display: block; outline: none; cursor: grab; }
+/* the cue under the front card (the scroll): "Click to edit"; clicks on it reach the cards, which open the front card */
+.front-hint {
+  position: absolute; z-index: 2;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 999px;
+  background: rgba(14, 16, 22, 0.78);
+  color: rgba(248, 250, 252, 0.92);
+  font-size: 11.5px; font-weight: 500; letter-spacing: 0.02em; white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.96);
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+.front-hint.on { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+.front-hint svg { width: 12px; height: 12px; opacity: 0.85; }
 /* see-through background (Settings): the page is transparent and the wheel draws the dark tint itself */
 body.see-through { background: transparent; }
 
@@ -206,9 +223,10 @@ body.collapsed #panel > * { flex-shrink: 0; }
    toolbar hidden; the toolbar and the cards with it out (not the room left of a folded panel). --shown-left and
    --shown-top are where that part starts, so notes open over the cards and dialogs stay inside it. */
 :root { --pwmax: 264px; --strip: 34px; }   /* --pwmax: the panel unfolded (--pw) */
-.title-strip, .bar-show, .frame-edges { display: none; }
+.title-strip, .bar-show, .frame-edges, .find-strip { display: none; }
 body.frameless { background: transparent; --shown-left: var(--pwmax); --shown-top: var(--strip); }
 body.frameless.bar-out { --shown-left: calc(var(--pwmax) - var(--pw)); --shown-top: 0px; }
+body.frameless.find-out { --shown-top: 0px; }   /* the search box of its own, above the cards */
 body.frameless #stage { inset: var(--strip) 0 0 var(--pwmax); transition: none; }
 body.frameless #panel { inset: var(--strip) auto 0 var(--shown-left); transition: none; }
 body.frameless:not(.bar-out) #panel { display: none; }
@@ -219,8 +237,8 @@ body.frameless .dlg { max-height: calc(100vh - var(--shown-top) - 32px); }
    it's out, dims too, as it does in a window with its frame. */
 body.frameless .ed-layer { background: transparent; }
 body.frameless .ed-card { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.3); }
-body.frameless :is(#stage canvas, #panel, .title-strip) { transition: filter 0.28s; }
-body.frameless.note-open :is(#stage canvas, #panel, .title-strip) { filter: brightness(0.5); }
+body.frameless :is(#stage canvas, #panel, .title-strip, .find-box) { transition: filter 0.28s; }
+body.frameless.note-open :is(#stage canvas, #panel, .title-strip, .find-box) { filter: brightness(0.5); }
 
 body.frameless.bar-out .title-strip {
   position: fixed; inset: 0 0 auto var(--shown-left); z-index: 6;
@@ -250,6 +268,32 @@ body.frameless:not(.bar-out) .bar-show {
 body.frameless:not(.bar-out):hover .bar-show, .bar-show:focus-visible { opacity: 1; }
 .bar-show:hover { background: rgba(34, 38, 46, 0.94); color: var(--text-strong); }
 .bar-show svg { width: 16px; height: 16px; }
+body.frameless:not(.bar-out) .find-show { left: calc(var(--pwmax) + 8px + 30px + 6px); }
+body.frameless.find-out .find-show { display: none; }
+
+/* the search box of its own (the window frame and the toolbar hidden): in the strip above the cards, where the
+   toolbar's title strip goes; around the box it's as clear as around the cards */
+body.frameless.find-out:not(.bar-out) .find-strip {
+  position: fixed; inset: 0 0 auto var(--pwmax); z-index: 6;
+  height: var(--strip);
+  display: flex; align-items: center;
+  padding: 3px 4px 2px;
+}
+.find-box {
+  flex: 1; min-width: 0; height: 100%;
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 3px 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 9px;
+  background: rgba(26, 29, 35, 0.92);
+  color: var(--text-3);
+}
+.find-box:focus-within { border-color: var(--accent); color: var(--text-2); }
+.find-box.active { border-color: rgba(246, 207, 87, 0.6); }
+.find-box > svg { width: 15px; height: 15px; flex: none; }
+.find-box input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text-strong); font-size: 13.5px; }
+.find-box input::-webkit-search-cancel-button { display: none; }
+.find-info { font-size: 12px; white-space: nowrap; color: var(--text-3); }
+.find-info strong { color: var(--text-2); font-weight: 600; }
 
 body.frameless.bar-out .frame-edges { display: block; }
 .frame-edges > div { position: fixed; z-index: 45; }
@@ -583,6 +627,10 @@ label.check input { accent-color: var(--accent); width: 15px; height: 15px; }
 .range-row output { min-width: 3em; font-variant-numeric: tabular-nums; }
 .range-row.off { opacity: 0.45; }
 .size-row { margin: 0 0 8px; }
+.style-row { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; color: var(--text-2); font-size: 13px; }
+.style-row > span { min-width: 4.6em; }
+.style-row .seg { flex: none; }
+.style-row .seg button { padding-inline: 14px; white-space: nowrap; }
 .size-row > span { min-width: 4.6em; }
 .size-row .btn { padding: 4px 10px; font-size: 12.5px; }
 /* the text size, as a note shows it */
